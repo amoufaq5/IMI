@@ -1,0 +1,98 @@
+# UMI .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+test.db
+
+# Models (large files)
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Data
+data/
+*.csv
+*.json.gz
+
+# Secrets
+secrets/
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Jupyter
+.ipynb_checkpoints/
+
+# mypy
+.mypy_cache/
+
+# Node (for frontend)
+node_modules/
+.next/
+out/
+
+# Temporary
+tmp/
+temp/
+*.tmp

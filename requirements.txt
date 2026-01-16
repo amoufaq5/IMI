@@ -1,0 +1,106 @@
+# UMI - Universal Medical Intelligence
+# Python Dependencies
+
+# Web Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+starlette==0.36.3
+python-multipart==0.0.9
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Redis & Caching
+redis==5.0.1
+aioredis==2.0.1
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic[email]==2.6.1
+pydantic-settings==2.1.0
+
+# AI/ML Core
+torch==2.2.0
+transformers==4.37.2
+accelerate==0.27.0
+bitsandbytes==0.42.0
+safetensors==0.4.2
+
+# LLM Serving
+vllm==0.3.2
+langchain==0.1.6
+langchain-community==0.0.19
+langchain-core==0.1.22
+openai==1.12.0
+
+# Vector Database & Embeddings
+qdrant-client==1.7.1
+sentence-transformers==2.3.1
+tiktoken==0.6.0
+
+# Medical NLP
+scispacy==0.5.3
+medspacy==1.0.0
+
+# Image Processing
+pillow==10.2.0
+opencv-python==4.9.0.80
+pydicom==2.4.4
+python-gdcm==3.0.23
+
+# OCR
+pytesseract==0.3.10
+pdf2image==1.17.0
+
+# Data Processing
+pandas==2.2.0
+numpy==1.26.4
+scipy==1.12.0
+scikit-learn==1.4.0
+
+# API Clients
+httpx==0.26.0
+aiohttp==3.9.3
+requests==2.31.0
+
+# Document Generation
+python-docx==1.1.0
+reportlab==4.0.9
+jinja2==3.1.3
+weasyprint==60.2
+
+# Task Queue
+celery==5.3.6
+flower==2.0.1
+
+# Monitoring & Logging
+prometheus-client==0.19.0
+structlog==24.1.0
+python-json-logger==2.0.7
+sentry-sdk[fastapi]==1.40.0
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4
+pytest-cov==4.1.0
+httpx==0.26.0
+factory-boy==3.3.0
+faker==22.6.0
+
+# Development
+black==24.1.1
+isort==5.13.2
+flake8==7.0.0
+mypy==1.8.0
+pre-commit==3.6.0
+
+# Utilities
+python-dotenv==1.0.1
+pyyaml==6.0.1
+orjson==3.9.13
+tenacity==8.2.3
+tqdm==4.66.1
