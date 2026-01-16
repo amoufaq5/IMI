@@ -56,8 +56,8 @@ htmlcov/
 .tox/
 test.db
 
-# Models (large files)
-models/
+# Models (large AI model files in root models/ directory)
+/models/
 *.bin
 *.pt
 *.pth

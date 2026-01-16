@@ -5,7 +5,7 @@ Main router aggregating all v1 endpoints
 
 from fastapi import APIRouter
 
-from src.api.v1 import auth, users, consultations, pharma, drugs, health
+from src.api.v1 import auth, users, consultations, pharma, drugs, health, imaging
 
 api_router = APIRouter()
 
@@ -44,4 +44,10 @@ api_router.include_router(
     health.router,
     prefix="/health",
     tags=["Health Information"],
+)
+
+api_router.include_router(
+    imaging.router,
+    prefix="/imaging",
+    tags=["Medical Imaging"],
 )
