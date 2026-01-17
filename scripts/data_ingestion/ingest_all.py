@@ -8,11 +8,20 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from ingest_pubmed import PubMedIngestionPipeline
-from ingest_drugbank import DrugIngestionPipeline
-from ingest_clinicaltrials import ClinicalTrialsIngestionPipeline
-from ingest_rxnorm import RxNormIngestionPipeline
-from ingest_who import WHOIngestionPipeline
+try:
+    # When run as a module
+    from .ingest_pubmed import PubMedIngestionPipeline
+    from .ingest_drugbank import DrugIngestionPipeline
+    from .ingest_clinicaltrials import ClinicalTrialsIngestionPipeline
+    from .ingest_rxnorm import RxNormIngestionPipeline
+    from .ingest_who import WHOIngestionPipeline
+except ImportError:
+    # When run as a script
+    from ingest_pubmed import PubMedIngestionPipeline
+    from ingest_drugbank import DrugIngestionPipeline
+    from ingest_clinicaltrials import ClinicalTrialsIngestionPipeline
+    from ingest_rxnorm import RxNormIngestionPipeline
+    from ingest_who import WHOIngestionPipeline
 
 
 async def run_all_pipelines(
