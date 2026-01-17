@@ -339,7 +339,7 @@ class DataPreparationPipeline:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.all_pairs: List[MedicalQAPair] = []
     
-    def load_all_sources(self, data_dir: str = "data/raw") -> None:
+    def load_all_sources(self, data_dir: str = "data/raw", include_ingested: bool = True) -> None:
         """Load data from all available sources."""
         data_path = Path(data_dir)
         
@@ -369,7 +369,41 @@ class DataPreparationPipeline:
         # Always add ASMETHOD synthetic data
         self.all_pairs.extend(sources.generate_asmethod_training_data())
         
+        # Load from ingested data (knowledge_base)
+        if include_ingested:
+            self._load_ingested_data()
+        
         print(f"Total QA pairs loaded: {len(self.all_pairs)}")
+    
+    def _load_ingested_data(self, kb_dir: str = "data/knowledge_base") -> None:
+        """Load QA pairs from ingested knowledge base data."""
+        from convert_ingested_data import IngestedDataConverter
+        
+        kb_path = Path(kb_dir)
+        if not kb_path.exists():
+            print("Knowledge base directory not found, skipping ingested data")
+            return
+        
+        try:
+            converter = IngestedDataConverter(
+                knowledge_base_dir=kb_dir,
+                output_dir="data/training/from_ingestion",
+            )
+            converter.convert_all()
+            
+            # Convert to MedicalQAPair format
+            for pair in converter.all_pairs:
+                self.all_pairs.append(MedicalQAPair(
+                    question=pair.question,
+                    answer=pair.answer,
+                    category=pair.category,
+                    source=pair.source,
+                    metadata=pair.metadata,
+                ))
+            
+            print(f"Loaded {len(converter.all_pairs)} pairs from ingested data")
+        except Exception as e:
+            print(f"Error loading ingested data: {e}")
     
     def clean_text(self, text: str) -> str:
         """Clean and normalize text."""
