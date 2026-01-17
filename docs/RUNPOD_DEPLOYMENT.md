@@ -1,6 +1,19 @@
 # UMI - RunPod Deployment Guide
 
-This guide covers deploying UMI on RunPod for GPU-accelerated AI inference.
+Complete guide for deploying UMI Medical LLM on RunPod with GPU-accelerated AI inference.
+
+**Last Updated**: January 2026
+
+---
+
+## Quick Reference
+
+| Component | Recommendation |
+|-----------|----------------|
+| **GPU** | RTX 4090 (24GB) for MVP |
+| **Volume** | 50GB minimum |
+| **Time to Deploy** | ~30 minutes |
+| **Monthly Cost** | ~$500 (24/7) |
 
 ---
 
@@ -10,6 +23,7 @@ This guide covers deploying UMI on RunPod for GPU-accelerated AI inference.
 - **Cost-Effective**: Pay per hour, no long-term commitment
 - **Fast Deployment**: Pre-configured ML environments
 - **Scalable**: Spin up multiple pods as needed
+- **Persistent Storage**: Volumes survive pod restarts
 
 ---
 
@@ -141,14 +155,14 @@ echo "=== UMI RunPod Startup Script ==="
 cd /workspace
 
 # Clone or update repository
-if [ -d "umi" ]; then
+if [ -d "IMI" ]; then
     echo "Updating existing repository..."
-    cd umi
+    cd IMI
     git pull origin main
 else
     echo "Cloning repository..."
-    git clone https://github.com/your-org/umi.git
-    cd umi
+    git clone https://github.com/amoufaq5/IMI.git
+    cd IMI
 fi
 
 # Create virtual environment
@@ -444,13 +458,22 @@ pip install flash-attn --no-build-isolation
 
 ```bash
 # Start UMI
-cd /workspace/umi && source venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8000
+cd /workspace/IMI && source venv/bin/activate && uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 # Stop UMI
 pkill -f uvicorn
 
 # Update code
-cd /workspace/umi && git pull && pip install -r requirements.txt
+cd /workspace/IMI && git pull && pip install -r requirements.txt
+
+# Run training pipeline (optional)
+cd /workspace/IMI && python scripts/training/download_datasets.py
+python scripts/training/prepare_data.py
+python scripts/training/fine_tune.py --epochs 3
+
+# Ingest medical knowledge
+python scripts/data_ingestion/ingest_pubmed.py
+python scripts/data_ingestion/ingest_drugbank.py
 
 # View GPU usage
 nvidia-smi -l 1
