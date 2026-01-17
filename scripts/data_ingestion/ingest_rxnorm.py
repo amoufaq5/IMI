@@ -1,6 +1,6 @@
 """
-UMI DrugBank/OpenFDA Data Ingestion Pipeline
-Fetches drug information from open sources for RAG
+UMI RxNorm Data Ingestion Pipeline
+Fetches drug terminology and relationships from NIH RxNorm API
 """
 
 import asyncio
@@ -8,577 +8,361 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 from tqdm import tqdm
 
 
 @dataclass
-class DrugInfo:
-    """Represents drug information."""
-    id: str
+class RxNormDrug:
+    """Represents an RxNorm drug concept."""
+    rxcui: str
     name: str
-    generic_name: str
+    synonym: str
+    tty: str  # Term type (e.g., SBD, SCD, IN, BN)
+    ingredients: List[str]
     brand_names: List[str]
-    drug_class: str
-    description: str
-    indications: List[str]
-    mechanism: str
-    dosage_forms: List[str]
-    warnings: List[str]
-    contraindications: List[str]
+    dose_forms: List[str]
+    strengths: List[str]
+    ndc_codes: List[str]
+    drug_classes: List[str]
     interactions: List[Dict[str, str]]
-    side_effects: List[str]
-    pregnancy_category: Optional[str] = None
-    source: str = "OpenFDA"
+    related_drugs: List[Dict[str, str]]
 
 
-class OpenFDAClient:
+class RxNormClient:
     """
-    Client for OpenFDA Drug API.
-    https://open.fda.gov/apis/drug/
+    Client for NIH RxNorm REST API.
+    https://lhncbc.nlm.nih.gov/RxNav/APIs/RxNormAPIs.html
     """
     
-    BASE_URL = "https://api.fda.gov/drug"
+    BASE_URL = "https://rxnav.nlm.nih.gov/REST"
     
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
+    def __init__(self):
         self.client = httpx.AsyncClient(timeout=30.0)
     
-    async def search_drugs(
-        self,
-        query: str,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Search for drugs by name or indication."""
-        params = {
-            "search": query,
-            "limit": limit,
-        }
-        
-        if self.api_key:
-            params["api_key"] = self.api_key
-        
+    async def search_drugs(self, name: str) -> List[Dict[str, Any]]:
+        """Search for drugs by name."""
         try:
             response = await self.client.get(
-                f"{self.BASE_URL}/label.json",
-                params=params,
+                f"{self.BASE_URL}/drugs.json",
+                params={"name": name},
             )
             response.raise_for_status()
             data = response.json()
-            return data.get("results", [])
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return []
-            raise
-    
-    async def get_drug_labels(self, limit: int = 1000, skip: int = 0) -> List[Dict[str, Any]]:
-        """Get drug labels in bulk."""
-        params = {
-            "limit": min(limit, 100),  # API max is 100
-            "skip": skip,
-        }
-        
-        if self.api_key:
-            params["api_key"] = self.api_key
-        
-        try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/label.json",
-                params=params,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("results", [])
+            
+            drug_group = data.get("drugGroup", {})
+            concept_groups = drug_group.get("conceptGroup", [])
+            
+            results = []
+            for group in concept_groups:
+                concepts = group.get("conceptProperties", [])
+                for concept in concepts:
+                    results.append({
+                        "rxcui": concept.get("rxcui", ""),
+                        "name": concept.get("name", ""),
+                        "synonym": concept.get("synonym", ""),
+                        "tty": concept.get("tty", ""),
+                    })
+            
+            return results
         except Exception as e:
-            print(f"Error fetching labels: {e}")
+            print(f"Error searching drugs: {e}")
             return []
     
-    async def get_drug_interactions(self, drug_name: str) -> List[Dict[str, Any]]:
-        """Get drug interactions for a specific drug."""
-        params = {
-            "search": f'drug_interactions:"{drug_name}"',
-            "limit": 10,
-        }
-        
-        if self.api_key:
-            params["api_key"] = self.api_key
-        
+    async def get_all_drugs_by_class(self, class_id: str, class_type: str = "ATC") -> List[Dict[str, Any]]:
+        """Get all drugs in a drug class."""
         try:
             response = await self.client.get(
-                f"{self.BASE_URL}/label.json",
-                params=params,
+                f"{self.BASE_URL}/rxclass/classMembers.json",
+                params={
+                    "classId": class_id,
+                    "relaSource": class_type,
+                },
             )
             response.raise_for_status()
             data = response.json()
-            return data.get("results", [])
-        except:
-            return []
-    
-    def parse_drug_label(self, label: Dict[str, Any]) -> Optional[DrugInfo]:
-        """Parse FDA drug label into DrugInfo."""
-        try:
-            openfda = label.get("openfda", {})
             
-            # Get drug name
-            brand_names = openfda.get("brand_name", [])
-            generic_names = openfda.get("generic_name", [])
-            
-            name = brand_names[0] if brand_names else (generic_names[0] if generic_names else None)
-            if not name:
-                return None
-            
-            generic_name = generic_names[0] if generic_names else name
-            
-            # Generate ID
-            drug_id = openfda.get("product_ndc", [""])[0] or name.lower().replace(" ", "_")
-            
-            # Drug class
-            pharm_class = openfda.get("pharm_class_epc", [])
-            drug_class = pharm_class[0] if pharm_class else "Unknown"
-            
-            # Description
-            description_parts = label.get("description", [])
-            description = description_parts[0][:2000] if description_parts else ""
-            
-            # Indications
-            indications_parts = label.get("indications_and_usage", [])
-            indications = [ind[:500] for ind in indications_parts[:5]]
-            
-            # Mechanism
-            mechanism_parts = label.get("mechanism_of_action", [])
-            mechanism = mechanism_parts[0][:1000] if mechanism_parts else ""
-            
-            # Dosage forms
-            dosage_parts = label.get("dosage_forms_and_strengths", [])
-            dosage_forms = dosage_parts[:5] if dosage_parts else []
-            
-            # Warnings
-            warnings_parts = label.get("warnings", []) or label.get("warnings_and_cautions", [])
-            warnings = [w[:500] for w in warnings_parts[:5]]
-            
-            # Contraindications
-            contra_parts = label.get("contraindications", [])
-            contraindications = [c[:500] for c in contra_parts[:5]]
-            
-            # Side effects
-            adverse_parts = label.get("adverse_reactions", [])
-            side_effects = [a[:500] for a in adverse_parts[:5]]
-            
-            # Interactions
-            interaction_parts = label.get("drug_interactions", [])
-            interactions = []
-            for inter in interaction_parts[:10]:
-                interactions.append({
-                    "description": inter[:500] if isinstance(inter, str) else str(inter)[:500],
+            members = data.get("drugMemberGroup", {}).get("drugMember", [])
+            results = []
+            for member in members:
+                node = member.get("minConcept", {})
+                results.append({
+                    "rxcui": node.get("rxcui", ""),
+                    "name": node.get("name", ""),
+                    "tty": node.get("tty", ""),
                 })
             
-            # Pregnancy
-            pregnancy_parts = label.get("pregnancy", [])
-            pregnancy_category = None
-            if pregnancy_parts:
-                preg_text = pregnancy_parts[0]
-                for cat in ["A", "B", "C", "D", "X"]:
-                    if f"Category {cat}" in preg_text or f"category {cat}" in preg_text:
-                        pregnancy_category = cat
-                        break
-            
-            return DrugInfo(
-                id=drug_id,
-                name=name,
-                generic_name=generic_name,
-                brand_names=brand_names,
-                drug_class=drug_class,
-                description=description,
-                indications=indications,
-                mechanism=mechanism,
-                dosage_forms=dosage_forms,
-                warnings=warnings,
-                contraindications=contraindications,
-                interactions=interactions,
-                side_effects=side_effects,
-                pregnancy_category=pregnancy_category,
-                source="OpenFDA",
-            )
-        
+            return results
         except Exception as e:
-            print(f"Error parsing drug label: {e}")
-            return None
+            print(f"Error getting class members: {e}")
+            return []
+    
+    async def get_drug_properties(self, rxcui: str) -> Dict[str, Any]:
+        """Get detailed properties for a drug."""
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/rxcui/{rxcui}/allProperties.json",
+                params={"prop": "all"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            properties = {}
+            prop_concepts = data.get("propConceptGroup", {}).get("propConcept", [])
+            for prop in prop_concepts:
+                prop_name = prop.get("propName", "")
+                prop_value = prop.get("propValue", "")
+                if prop_name not in properties:
+                    properties[prop_name] = []
+                properties[prop_name].append(prop_value)
+            
+            return properties
+        except Exception as e:
+            return {}
+    
+    async def get_related_drugs(self, rxcui: str) -> List[Dict[str, str]]:
+        """Get related drugs (brand names, generics, etc.)."""
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/rxcui/{rxcui}/related.json",
+                params={"tty": "BN+IN+SBD+SCD"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            related = []
+            groups = data.get("relatedGroup", {}).get("conceptGroup", [])
+            for group in groups:
+                tty = group.get("tty", "")
+                concepts = group.get("conceptProperties", [])
+                for concept in concepts:
+                    related.append({
+                        "rxcui": concept.get("rxcui", ""),
+                        "name": concept.get("name", ""),
+                        "tty": tty,
+                    })
+            
+            return related
+        except Exception as e:
+            return []
+    
+    async def get_drug_interactions(self, rxcui: str) -> List[Dict[str, str]]:
+        """Get drug-drug interactions."""
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/interaction/interaction.json",
+                params={"rxcui": rxcui},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            interactions = []
+            interaction_groups = data.get("interactionTypeGroup", [])
+            for group in interaction_groups:
+                for itype in group.get("interactionType", []):
+                    for pair in itype.get("interactionPair", []):
+                        description = pair.get("description", "")
+                        severity = pair.get("severity", "")
+                        
+                        # Get the interacting drug
+                        concepts = pair.get("interactionConcept", [])
+                        for concept in concepts:
+                            drug_info = concept.get("minConceptItem", {})
+                            if drug_info.get("rxcui") != rxcui:
+                                interactions.append({
+                                    "drug": drug_info.get("name", ""),
+                                    "rxcui": drug_info.get("rxcui", ""),
+                                    "description": description,
+                                    "severity": severity,
+                                })
+            
+            return interactions
+        except Exception as e:
+            return []
+    
+    async def get_ndc_codes(self, rxcui: str) -> List[str]:
+        """Get NDC codes for a drug."""
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/rxcui/{rxcui}/ndcs.json",
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            ndc_group = data.get("ndcGroup", {})
+            ndc_list = ndc_group.get("ndcList", {}).get("ndc", [])
+            return ndc_list[:20]  # Limit to 20 NDCs
+        except Exception as e:
+            return []
+    
+    async def get_drug_classes(self, rxcui: str) -> List[str]:
+        """Get drug classes for a drug."""
+        try:
+            response = await self.client.get(
+                f"{self.BASE_URL}/rxclass/class/byRxcui.json",
+                params={"rxcui": rxcui},
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            classes = []
+            class_info = data.get("rxclassDrugInfoList", {}).get("rxclassDrugInfo", [])
+            for info in class_info:
+                class_name = info.get("rxclassMinConceptItem", {}).get("className", "")
+                if class_name and class_name not in classes:
+                    classes.append(class_name)
+            
+            return classes[:10]  # Limit to 10 classes
+        except Exception as e:
+            return []
     
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
 
 
-class DrugIngestionPipeline:
+class RxNormIngestionPipeline:
     """
-    Pipeline for ingesting drug information into UMI knowledge base.
+    Pipeline for ingesting RxNorm drug data into UMI knowledge base.
     """
     
-    # Comprehensive drug categories to fetch - expanded for maximum coverage
-    DRUG_CATEGORIES = [
-        # Pain & Inflammation
-        "analgesic",
-        "NSAID",
-        "opioid",
-        "opioid analgesic",
-        "non-opioid analgesic",
-        "muscle relaxant",
-        "local anesthetic",
-        
-        # Cardiovascular
-        "antihypertensive",
-        "beta blocker",
-        "ACE inhibitor",
-        "angiotensin receptor blocker",
-        "calcium channel blocker",
-        "diuretic",
-        "loop diuretic",
-        "thiazide diuretic",
-        "potassium-sparing diuretic",
-        "statin",
-        "HMG-CoA reductase inhibitor",
-        "anticoagulant",
-        "antiplatelet",
-        "thrombolytic",
-        "antiarrhythmic",
-        "cardiac glycoside",
-        "vasodilator",
-        "nitrate",
-        "fibrate",
-        
-        # Diabetes & Metabolic
-        "antidiabetic",
-        "insulin",
-        "biguanide",
-        "sulfonylurea",
-        "DPP-4 inhibitor",
-        "SGLT2 inhibitor",
-        "GLP-1 agonist",
-        "thiazolidinedione",
-        "thyroid hormone",
-        "antithyroid",
-        
-        # Respiratory
-        "bronchodilator",
-        "beta-2 agonist",
-        "anticholinergic bronchodilator",
-        "inhaled corticosteroid",
-        "leukotriene inhibitor",
-        "antihistamine",
-        "H1 antihistamine",
-        "decongestant",
-        "antitussive",
-        "expectorant",
-        "mucolytic",
-        
-        # Gastrointestinal
-        "proton pump inhibitor",
-        "H2 blocker",
-        "antacid",
-        "antiemetic",
-        "prokinetic",
-        "laxative",
-        "antidiarrheal",
-        "antispasmodic",
-        "5-HT3 antagonist",
-        
-        # Psychiatric & Neurological
-        "antidepressant",
-        "SSRI",
-        "SNRI",
-        "tricyclic antidepressant",
-        "MAO inhibitor",
-        "antipsychotic",
-        "typical antipsychotic",
-        "atypical antipsychotic",
-        "anxiolytic",
-        "benzodiazepine",
-        "anticonvulsant",
-        "antiepileptic",
-        "mood stabilizer",
-        "stimulant",
-        "ADHD medication",
-        "hypnotic",
-        "sedative",
-        "antiparkinson",
-        "dopamine agonist",
-        "cholinesterase inhibitor",
-        
-        # Anti-infective
-        "antibiotic",
-        "penicillin",
-        "cephalosporin",
-        "fluoroquinolone",
-        "macrolide",
-        "aminoglycoside",
-        "tetracycline",
-        "sulfonamide",
-        "carbapenem",
-        "glycopeptide",
-        "antiviral",
-        "antiretroviral",
-        "antifungal",
-        "azole antifungal",
-        "antimalarial",
-        "antiparasitic",
-        "anthelmintic",
-        "antiprotozoal",
-        
-        # Immunology & Rheumatology
-        "corticosteroid",
-        "glucocorticoid",
-        "immunosuppressant",
-        "DMARD",
-        "biologic DMARD",
-        "TNF inhibitor",
-        "interleukin inhibitor",
-        "JAK inhibitor",
-        "immunomodulator",
-        
-        # Oncology
-        "antineoplastic",
-        "chemotherapy",
-        "alkylating agent",
-        "antimetabolite",
-        "topoisomerase inhibitor",
-        "mitotic inhibitor",
-        "tyrosine kinase inhibitor",
-        "monoclonal antibody",
-        "hormone therapy",
-        "aromatase inhibitor",
-        "antiandrogen",
-        
-        # Hematology
-        "anticoagulant",
-        "direct oral anticoagulant",
-        "heparin",
-        "vitamin K antagonist",
-        "erythropoietin",
-        "colony stimulating factor",
-        "iron supplement",
-        "vitamin B12",
-        "folic acid",
-        
-        # Dermatology
-        "topical corticosteroid",
-        "topical antibiotic",
-        "topical antifungal",
-        "retinoid",
-        "keratolytic",
-        "emollient",
-        
-        # Ophthalmology
-        "ophthalmic antibiotic",
-        "ophthalmic anti-inflammatory",
-        "glaucoma medication",
-        "mydriatic",
-        
-        # Urology
-        "alpha blocker",
-        "5-alpha reductase inhibitor",
-        "phosphodiesterase inhibitor",
-        "urinary antispasmodic",
-        
-        # Obstetrics & Gynecology
-        "contraceptive",
-        "estrogen",
-        "progestin",
-        "oxytocic",
-        "tocolytic",
-        
-        # Miscellaneous
-        "vitamin",
-        "mineral supplement",
-        "electrolyte",
-        "antidote",
-        "chelating agent",
-        "vaccine",
-    ]
-    
-    # Comprehensive OTC drugs to specifically include
-    OTC_DRUGS = [
-        # Pain relievers
-        "acetaminophen",
-        "ibuprofen",
-        "aspirin",
-        "naproxen",
-        "ketoprofen",
-        "magnesium salicylate",
-        
-        # Allergy & Cold
-        "diphenhydramine",
-        "loratadine",
-        "cetirizine",
-        "fexofenadine",
-        "chlorpheniramine",
-        "pseudoephedrine",
-        "phenylephrine",
-        "oxymetazoline",
-        "guaifenesin",
-        "dextromethorphan",
-        "benzonatate",
-        
-        # Gastrointestinal
-        "omeprazole",
-        "esomeprazole",
-        "lansoprazole",
-        "famotidine",
-        "ranitidine",
-        "cimetidine",
-        "calcium carbite",
-        "magnesium hydroxide",
-        "aluminum hydroxide",
-        "bismuth subsalicylate",
-        "loperamide",
-        "simethicone",
-        "docusate",
-        "bisacodyl",
-        "polyethylene glycol",
-        "psyllium",
-        "sennosides",
-        
-        # Topical
-        "hydrocortisone",
-        "bacitracin",
-        "neomycin",
-        "polymyxin B",
-        "benzoyl peroxide",
-        "salicylic acid",
-        "clotrimazole",
-        "miconazole",
-        "terbinafine",
-        "tolnaftate",
-        "lidocaine",
-        "benzocaine",
-        "capsaicin",
-        "menthol",
-        "camphor",
-        
-        # Eye care
-        "artificial tears",
-        "tetrahydrozoline",
-        "naphazoline",
-        "ketotifen",
-        
-        # Sleep aids
-        "melatonin",
-        "doxylamine",
-        "valerian",
-        
-        # Vitamins & Supplements
-        "vitamin D",
-        "vitamin C",
-        "vitamin B12",
-        "folic acid",
-        "iron",
-        "calcium",
-        "magnesium",
-        "zinc",
-        "omega-3",
-        "probiotics",
-        "glucosamine",
-        "chondroitin",
-        
-        # Motion sickness
-        "dimenhydrinate",
-        "meclizine",
-        
-        # Smoking cessation
-        "nicotine",
-        
-        # Weight loss
-        "orlistat",
-        
-        # Diabetes
-        "glucose",
+    # Common drug names to fetch (ingredients and brand names)
+    DRUG_NAMES = [
+        # Top prescribed medications
+        "lisinopril", "atorvastatin", "metformin", "amlodipine", "metoprolol",
+        "omeprazole", "simvastatin", "losartan", "gabapentin", "hydrochlorothiazide",
+        "sertraline", "acetaminophen", "atenolol", "levothyroxine", "furosemide",
+        "azithromycin", "amoxicillin", "alprazolam", "prednisone", "zolpidem",
+        "clopidogrel", "pantoprazole", "escitalopram", "carvedilol", "trazodone",
+        "fluticasone", "montelukast", "rosuvastatin", "tramadol", "tamsulosin",
+        "duloxetine", "venlafaxine", "bupropion", "citalopram", "fluoxetine",
+        "paroxetine", "mirtazapine", "quetiapine", "aripiprazole", "risperidone",
+        "olanzapine", "clonazepam", "lorazepam", "diazepam", "buspirone",
+        "warfarin", "rivaroxaban", "apixaban", "dabigatran", "enoxaparin",
+        "insulin glargine", "insulin lispro", "insulin aspart", "sitagliptin", "empagliflozin",
+        "liraglutide", "semaglutide", "dulaglutide", "glipizide", "glyburide",
+        "albuterol", "budesonide", "tiotropium", "formoterol", "ipratropium",
+        "cetirizine", "loratadine", "fexofenadine", "diphenhydramine", "hydroxyzine",
+        "ibuprofen", "naproxen", "meloxicam", "celecoxib", "diclofenac",
+        "oxycodone", "hydrocodone", "morphine", "fentanyl", "codeine",
+        "cyclobenzaprine", "baclofen", "tizanidine", "methocarbamol",
+        "ciprofloxacin", "levofloxacin", "doxycycline", "cephalexin", "amoxicillin-clavulanate",
+        "sulfamethoxazole-trimethoprim", "nitrofurantoin", "metronidazole", "clindamycin",
+        "fluconazole", "nystatin", "terbinafine", "ketoconazole",
+        "acyclovir", "valacyclovir", "oseltamivir",
+        "esomeprazole", "famotidine", "ranitidine", "sucralfate",
+        "ondansetron", "promethazine", "metoclopramide", "prochlorperazine",
+        "spironolactone", "triamterene", "chlorthalidone", "indapamide",
+        "diltiazem", "verapamil", "nifedipine", "felodipine",
+        "pravastatin", "lovastatin", "fluvastatin", "pitavastatin",
+        "ezetimibe", "fenofibrate", "gemfibrozil", "niacin",
+        "liothyronine", "methimazole", "propylthiouracil",
+        "allopurinol", "colchicine", "febuxostat",
+        "finasteride", "dutasteride", "sildenafil", "tadalafil",
+        "sumatriptan", "rizatriptan", "topiramate", "valproic acid",
+        "levetiracetam", "lamotrigine", "carbamazepine", "phenytoin", "oxcarbazepine",
+        "lithium", "divalproex",
+        "donepezil", "memantine", "rivastigmine", "galantamine",
+        "carbidopa-levodopa", "pramipexole", "ropinirole", "rasagiline",
+        "methylphenidate", "amphetamine", "lisdexamfetamine", "atomoxetine",
+        "prednisone", "methylprednisolone", "dexamethasone", "hydrocortisone",
+        "methotrexate", "hydroxychloroquine", "sulfasalazine", "leflunomide",
+        "adalimumab", "etanercept", "infliximab", "certolizumab", "golimumab",
+        "tacrolimus", "cyclosporine", "mycophenolate", "azathioprine",
     ]
     
     def __init__(
         self,
-        output_dir: str = "data/knowledge_base/drugs",
-        api_key: Optional[str] = None,
+        output_dir: str = "data/knowledge_base/rxnorm",
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.client = OpenFDAClient(api_key=api_key)
-        self.drugs: List[DrugInfo] = []
+        self.client = RxNormClient()
+        self.drugs: List[RxNormDrug] = []
+        self.processed_rxcuis: Set[str] = set()
     
-    async def fetch_category(self, category: str, limit: int = 50) -> List[DrugInfo]:
-        """Fetch drugs for a specific category."""
-        query = f'openfda.pharm_class_epc:"{category}"'
+    async def fetch_drug(self, name: str) -> List[RxNormDrug]:
+        """Fetch drug information by name."""
+        drugs = []
         
-        try:
-            labels = await self.client.search_drugs(query, limit=limit)
-            
-            drugs = []
-            for label in labels:
-                drug = self.client.parse_drug_label(label)
-                if drug:
-                    drugs.append(drug)
-            
-            return drugs
-        except Exception as e:
-            print(f"Error fetching category {category}: {e}")
-            return []
-    
-    async def fetch_drug_by_name(self, name: str) -> Optional[DrugInfo]:
-        """Fetch a specific drug by name."""
-        query = f'openfda.generic_name:"{name}" OR openfda.brand_name:"{name}"'
+        # Search for the drug
+        search_results = await self.client.search_drugs(name)
         
-        try:
-            labels = await self.client.search_drugs(query, limit=1)
+        for result in search_results[:5]:  # Limit to top 5 results per name
+            rxcui = result.get("rxcui", "")
             
-            if labels:
-                return self.client.parse_drug_label(labels[0])
-            return None
-        except Exception as e:
-            print(f"Error fetching drug {name}: {e}")
-            return None
+            if not rxcui or rxcui in self.processed_rxcuis:
+                continue
+            
+            self.processed_rxcuis.add(rxcui)
+            
+            # Get additional information
+            properties = await self.client.get_drug_properties(rxcui)
+            related = await self.client.get_related_drugs(rxcui)
+            interactions = await self.client.get_drug_interactions(rxcui)
+            ndc_codes = await self.client.get_ndc_codes(rxcui)
+            drug_classes = await self.client.get_drug_classes(rxcui)
+            
+            # Extract ingredients
+            ingredients = []
+            for rel in related:
+                if rel.get("tty") == "IN":
+                    ingredients.append(rel.get("name", ""))
+            
+            # Extract brand names
+            brand_names = []
+            for rel in related:
+                if rel.get("tty") == "BN":
+                    brand_names.append(rel.get("name", ""))
+            
+            # Extract dose forms and strengths from properties
+            dose_forms = properties.get("DOSE_FORM", [])
+            strengths = properties.get("STRENGTH", [])
+            
+            drug = RxNormDrug(
+                rxcui=rxcui,
+                name=result.get("name", ""),
+                synonym=result.get("synonym", ""),
+                tty=result.get("tty", ""),
+                ingredients=ingredients,
+                brand_names=brand_names,
+                dose_forms=dose_forms,
+                strengths=strengths,
+                ndc_codes=ndc_codes,
+                drug_classes=drug_classes,
+                interactions=interactions[:20],  # Limit interactions
+                related_drugs=[r for r in related if r.get("tty") in ("SBD", "SCD")][:10],
+            )
+            drugs.append(drug)
+            
+            # Rate limiting
+            await asyncio.sleep(0.2)
+        
+        return drugs
     
-    async def run(self, max_per_category: int = 30) -> None:
+    async def run(self) -> None:
         """Run the full ingestion pipeline."""
         print("=" * 60)
-        print("UMI Drug Data Ingestion Pipeline")
+        print("UMI RxNorm Ingestion Pipeline")
         print("=" * 60)
         
         all_drugs = []
         
-        # Fetch by category
-        for category in tqdm(self.DRUG_CATEGORIES, desc="Fetching categories"):
+        for name in tqdm(self.DRUG_NAMES, desc="Fetching drugs"):
             try:
-                drugs = await self.fetch_category(category, limit=max_per_category)
+                drugs = await self.fetch_drug(name)
                 all_drugs.extend(drugs)
-                print(f"  {category}: {len(drugs)} drugs")
+                if drugs:
+                    print(f"  {name}: {len(drugs)} entries")
             except Exception as e:
-                print(f"  Error: {e}")
+                print(f"  Error fetching {name}: {e}")
             
-            await asyncio.sleep(0.5)  # Rate limiting
+            await asyncio.sleep(0.3)  # Rate limiting
         
-        # Fetch specific OTC drugs
-        print("\nFetching OTC drugs...")
-        for drug_name in tqdm(self.OTC_DRUGS, desc="OTC drugs"):
-            try:
-                drug = await self.fetch_drug_by_name(drug_name)
-                if drug:
-                    all_drugs.append(drug)
-            except Exception as e:
-                print(f"  Error fetching {drug_name}: {e}")
-            
-            await asyncio.sleep(0.3)
-        
-        # Deduplicate
-        seen_ids = set()
-        unique_drugs = []
-        for drug in all_drugs:
-            key = drug.generic_name.lower()
-            if key not in seen_ids:
-                seen_ids.add(key)
-                unique_drugs.append(drug)
-        
-        self.drugs = unique_drugs
-        print(f"\nTotal unique drugs: {len(self.drugs)}")
+        self.drugs = all_drugs
+        print(f"\nTotal drug entries: {len(self.drugs)}")
         
         # Save
         await self.save()
@@ -588,7 +372,6 @@ class DrugIngestionPipeline:
     
     async def save(self) -> None:
         """Save drugs to disk."""
-        # Save as JSONL for RAG indexing
         output_file = self.output_dir / "drugs.jsonl"
         
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -596,74 +379,73 @@ class DrugIngestionPipeline:
                 # Create comprehensive content for RAG
                 content_parts = [
                     f"Drug: {drug.name}",
-                    f"Generic Name: {drug.generic_name}",
-                    f"Drug Class: {drug.drug_class}",
-                    "",
-                    "Description:",
-                    drug.description,
+                    f"RxCUI: {drug.rxcui}",
+                    f"Type: {drug.tty}",
                     "",
                 ]
                 
-                if drug.indications:
-                    content_parts.append("Indications:")
-                    content_parts.extend([f"- {ind}" for ind in drug.indications])
-                    content_parts.append("")
+                if drug.ingredients:
+                    content_parts.append(f"Active Ingredients: {', '.join(drug.ingredients)}")
                 
-                if drug.mechanism:
-                    content_parts.append("Mechanism of Action:")
-                    content_parts.append(drug.mechanism)
-                    content_parts.append("")
+                if drug.brand_names:
+                    content_parts.append(f"Brand Names: {', '.join(drug.brand_names)}")
                 
-                if drug.warnings:
-                    content_parts.append("Warnings:")
-                    content_parts.extend([f"- {w}" for w in drug.warnings])
-                    content_parts.append("")
+                if drug.drug_classes:
+                    content_parts.append(f"Drug Classes: {', '.join(drug.drug_classes)}")
                 
-                if drug.contraindications:
-                    content_parts.append("Contraindications:")
-                    content_parts.extend([f"- {c}" for c in drug.contraindications])
-                    content_parts.append("")
+                if drug.dose_forms:
+                    content_parts.append(f"Dose Forms: {', '.join(drug.dose_forms)}")
                 
-                if drug.side_effects:
-                    content_parts.append("Side Effects:")
-                    content_parts.extend([f"- {s}" for s in drug.side_effects])
+                if drug.strengths:
+                    content_parts.append(f"Strengths: {', '.join(drug.strengths)}")
+                
+                if drug.interactions:
+                    content_parts.append("")
+                    content_parts.append("Drug Interactions:")
+                    for interaction in drug.interactions[:10]:
+                        severity = interaction.get("severity", "")
+                        desc = interaction.get("description", "")[:200]
+                        content_parts.append(f"- {interaction.get('drug', '')} ({severity}): {desc}")
                 
                 doc = {
-                    "id": f"drug_{drug.id}",
-                    "title": f"{drug.name} ({drug.generic_name})",
+                    "id": f"rxnorm_{drug.rxcui}",
+                    "title": drug.name,
                     "content": "\n".join(content_parts),
                     "metadata": {
-                        "drug_id": drug.id,
-                        "name": drug.name,
-                        "generic_name": drug.generic_name,
+                        "rxcui": drug.rxcui,
+                        "tty": drug.tty,
+                        "ingredients": drug.ingredients,
                         "brand_names": drug.brand_names,
-                        "drug_class": drug.drug_class,
-                        "pregnancy_category": drug.pregnancy_category,
-                        "source": drug.source,
+                        "drug_classes": drug.drug_classes,
+                        "ndc_codes": drug.ndc_codes[:5],
+                        "source": "RxNorm",
                     },
                 }
                 f.write(json.dumps(doc, ensure_ascii=False) + '\n')
         
         print(f"Saved to: {output_file}")
         
-        # Save drug interactions separately
+        # Save interactions separately for quick lookup
         interactions_file = self.output_dir / "interactions.jsonl"
         with open(interactions_file, 'w', encoding='utf-8') as f:
             for drug in self.drugs:
-                if drug.interactions:
-                    for interaction in drug.interactions:
-                        doc = {
-                            "drug": drug.generic_name,
-                            "interaction": interaction,
-                        }
-                        f.write(json.dumps(doc, ensure_ascii=False) + '\n')
+                for interaction in drug.interactions:
+                    doc = {
+                        "drug1": drug.name,
+                        "drug1_rxcui": drug.rxcui,
+                        "drug2": interaction.get("drug", ""),
+                        "drug2_rxcui": interaction.get("rxcui", ""),
+                        "severity": interaction.get("severity", ""),
+                        "description": interaction.get("description", ""),
+                    }
+                    f.write(json.dumps(doc, ensure_ascii=False) + '\n')
         
         # Save statistics
         stats = {
             "total_drugs": len(self.drugs),
+            "total_interactions": sum(len(d.interactions) for d in self.drugs),
             "ingestion_date": datetime.now().isoformat(),
-            "categories": self.DRUG_CATEGORIES,
-            "otc_drugs": self.OTC_DRUGS,
+            "drug_names_searched": self.DRUG_NAMES,
         }
         
         stats_file = self.output_dir / "stats.json"
@@ -672,10 +454,9 @@ class DrugIngestionPipeline:
 
 
 async def main():
-    """Run the drug ingestion pipeline with maximum data collection."""
-    pipeline = DrugIngestionPipeline()
-    # Increased to 100 drugs per category for comprehensive coverage
-    await pipeline.run(max_per_category=100)
+    """Run the RxNorm ingestion pipeline."""
+    pipeline = RxNormIngestionPipeline()
+    await pipeline.run()
 
 
 if __name__ == "__main__":

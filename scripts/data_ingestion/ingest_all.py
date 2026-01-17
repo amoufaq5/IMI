@@ -1,27 +1,109 @@
 """
 UMI Master Data Ingestion Pipeline
-Runs all data ingestion pipelines to fetch maximum data from open sources
+Runs all data ingestion pipelines to fetch MAXIMUM data from open sources
+Fault-tolerant: continues even if individual scrapers fail
+NO LIMITS on data fetching
+
+Supported Data Sources (14 total):
+- PubMed: Medical literature and research articles
+- OpenFDA: Drug labels and information
+- ClinicalTrials.gov: Clinical trial data
+- RxNorm: Drug terminology and interactions
+- WHO/ICD-10: Disease classification codes
+- Kaggle: 80+ medical datasets with auto-download
+- MedlinePlus: Consumer health information
+- Open Targets: Drug-target-disease associations
+- UMLS: Unified medical terminology (requires API key)
+- SNOMED CT: Clinical terminology
+- Orphanet: Rare disease information
+- DisGeNET: Gene-disease associations
+- ChEMBL: Bioactivity and drug data
+- UniProt: Protein and gene data
 """
 
 import asyncio
 import argparse
+import importlib
+import os
+import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-try:
-    # When run as a module
-    from .ingest_pubmed import PubMedIngestionPipeline
-    from .ingest_drugbank import DrugIngestionPipeline
-    from .ingest_clinicaltrials import ClinicalTrialsIngestionPipeline
-    from .ingest_rxnorm import RxNormIngestionPipeline
-    from .ingest_who import WHOIngestionPipeline
-except ImportError:
-    # When run as a script
-    from ingest_pubmed import PubMedIngestionPipeline
-    from ingest_drugbank import DrugIngestionPipeline
-    from ingest_clinicaltrials import ClinicalTrialsIngestionPipeline
-    from ingest_rxnorm import RxNormIngestionPipeline
-    from ingest_who import WHOIngestionPipeline
+# Add script directory to path
+_script_dir = Path(__file__).parent.resolve()
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
+
+def safe_import(module_name: str, class_name: str):
+    """Safely import a pipeline class, returning None if import fails."""
+    try:
+        module = importlib.import_module(module_name)
+        return getattr(module, class_name)
+    except Exception as e:
+        print(f"  WARNING: Could not import {class_name} from {module_name}: {e}")
+        return None
+
+
+# Import all pipelines with fallback
+PubMedIngestionPipeline = safe_import("ingest_pubmed", "PubMedIngestionPipeline")
+DrugIngestionPipeline = safe_import("ingest_drugbank", "DrugIngestionPipeline")
+ClinicalTrialsIngestionPipeline = safe_import("ingest_clinicaltrials", "ClinicalTrialsIngestionPipeline")
+RxNormIngestionPipeline = safe_import("ingest_rxnorm", "RxNormIngestionPipeline")
+WHOIngestionPipeline = safe_import("ingest_who", "WHOIngestionPipeline")
+KaggleIngestionPipeline = safe_import("ingest_kaggle", "KaggleIngestionPipeline")
+MedlinePlusIngestionPipeline = safe_import("ingest_medlineplus", "MedlinePlusIngestionPipeline")
+OpenTargetsIngestionPipeline = safe_import("ingest_opentargets", "OpenTargetsIngestionPipeline")
+UMLSIngestionPipeline = safe_import("ingest_umls", "UMLSIngestionPipeline")
+SNOMEDIngestionPipeline = safe_import("ingest_snomed", "SNOMEDIngestionPipeline")
+OrphanetIngestionPipeline = safe_import("ingest_orphanet", "OrphanetIngestionPipeline")
+DisGeNETIngestionPipeline = safe_import("ingest_disgenet", "DisGeNETIngestionPipeline")
+ChEMBLIngestionPipeline = safe_import("ingest_chembl", "ChEMBLIngestionPipeline")
+UniProtIngestionPipeline = safe_import("ingest_uniprot", "UniProtIngestionPipeline")
+
+
+async def run_pipeline_safely(
+    name: str,
+    pipeline_class,
+    output_dir: str,
+    run_kwargs: Optional[Dict[str, Any]] = None,
+    init_kwargs: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Run a pipeline with comprehensive error handling."""
+    if pipeline_class is None:
+        print(f"  SKIPPED: {name} pipeline not available (import failed)")
+        return {"status": "skipped", "reason": "import_failed"}
+    
+    try:
+        init_args = {"output_dir": output_dir}
+        if init_kwargs:
+            init_args.update(init_kwargs)
+        
+        pipeline = pipeline_class(**init_args)
+        
+        if run_kwargs:
+            await pipeline.run(**run_kwargs)
+        else:
+            await pipeline.run()
+        
+        # Get count from common attributes
+        count = 0
+        for attr in ["articles", "drugs", "trials", "codes", "topics", "diseases", 
+                     "associations", "concepts", "molecules", "proteins", "datasets_processed",
+                     "targets"]:
+            if hasattr(pipeline, attr):
+                val = getattr(pipeline, attr)
+                count = len(val) if val else 0
+                break
+        
+        return {"status": "success", "count": count}
+        
+    except Exception as e:
+        print(f"  ERROR: {name} ingestion failed: {e}")
+        traceback.print_exc()
+        return {"status": "failed", "error": str(e)}
 
 
 async def run_all_pipelines(
@@ -30,10 +112,23 @@ async def run_all_pipelines(
     trials: bool = True,
     rxnorm: bool = True,
     who: bool = True,
+    kaggle: bool = True,
+    medlineplus: bool = True,
+    opentargets: bool = True,
+    umls: bool = True,
+    snomed: bool = True,
+    orphanet: bool = True,
+    disgenet: bool = True,
+    chembl: bool = True,
+    uniprot: bool = True,
     output_base: str = "data/knowledge_base",
+    kaggle_api_key: Optional[str] = None,
+    umls_api_key: Optional[str] = None,
+    disgenet_api_key: Optional[str] = None,
 ):
     """
-    Run all data ingestion pipelines.
+    Run all data ingestion pipelines with NO LIMITS.
+    Fault-tolerant: continues even if individual scrapers fail.
     
     Args:
         pubmed: Run PubMed ingestion
@@ -41,11 +136,24 @@ async def run_all_pipelines(
         trials: Run ClinicalTrials.gov ingestion
         rxnorm: Run RxNorm ingestion
         who: Run WHO/ICD-10 ingestion
+        kaggle: Run Kaggle datasets ingestion
+        medlineplus: Run MedlinePlus ingestion
+        opentargets: Run Open Targets ingestion
+        umls: Run UMLS ingestion (requires API key)
+        snomed: Run SNOMED CT ingestion
+        orphanet: Run Orphanet ingestion
+        disgenet: Run DisGeNET ingestion
+        chembl: Run ChEMBL ingestion
+        uniprot: Run UniProt ingestion
         output_base: Base output directory
+        kaggle_api_key: Kaggle API key
+        umls_api_key: UMLS API key
+        disgenet_api_key: DisGeNET API key
     """
     print("=" * 70)
-    print("UMI MASTER DATA INGESTION PIPELINE")
+    print("UMI MASTER DATA INGESTION PIPELINE - NO LIMITS")
     print(f"Started at: {datetime.now().isoformat()}")
+    print("Fault-tolerant mode: will continue if any scraper fails")
     print("=" * 70)
     
     results = {}
