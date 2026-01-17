@@ -51,7 +51,7 @@ class ClinicalTrialsClient:
     async def search_studies(
         self,
         query: str,
-        max_results: int = 100,
+        max_results: int = None,  # No limit by default
         status: Optional[List[str]] = None,
         phase: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
@@ -68,10 +68,10 @@ class ClinicalTrialsClient:
             List of study data
         """
         all_studies = []
-        page_size = min(max_results, 100)
+        page_size = 100  # API max per page
         page_token = None
         
-        while len(all_studies) < max_results:
+        while max_results is None or len(all_studies) < max_results:
             params = {
                 "query.term": query,
                 "pageSize": page_size,
@@ -112,7 +112,7 @@ class ClinicalTrialsClient:
             
             await asyncio.sleep(0.3)  # Rate limiting
         
-        return all_studies[:max_results]
+        return all_studies if max_results is None else all_studies[:max_results]
     
     def parse_study(self, study_data: Dict[str, Any]) -> Optional[ClinicalTrial]:
         """Parse study data into ClinicalTrial object."""
@@ -347,7 +347,7 @@ class ClinicalTrialsIngestionPipeline:
     async def fetch_trials_for_term(
         self,
         term: str,
-        max_results: int = 100,
+        max_results: int = None,  # No limit by default
     ) -> List[ClinicalTrial]:
         """Fetch trials for a specific search term."""
         trials = []
@@ -366,7 +366,7 @@ class ClinicalTrialsIngestionPipeline:
         
         return trials
     
-    async def run(self, max_per_term: int = 100) -> None:
+    async def run(self, max_per_term: int = None) -> None:  # No limit by default
         """Run the full ingestion pipeline."""
         print("=" * 60)
         print("UMI ClinicalTrials.gov Ingestion Pipeline")
@@ -481,9 +481,9 @@ class ClinicalTrialsIngestionPipeline:
 
 
 async def main():
-    """Run the ClinicalTrials.gov ingestion pipeline."""
+    """Run the ClinicalTrials.gov ingestion pipeline with no limits."""
     pipeline = ClinicalTrialsIngestionPipeline()
-    await pipeline.run(max_per_term=150)
+    await pipeline.run(max_per_term=None)  # Fetch all available trials
 
 
 if __name__ == "__main__":

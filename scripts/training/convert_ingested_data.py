@@ -401,10 +401,60 @@ class ICDConverter:
         return pairs
 
 
+<<<<<<< HEAD
+=======
+class GenericJSONLConverter:
+    """Generic converter for any JSONL data source with standard format."""
+    
+    @classmethod
+    def convert(cls, input_file: Path, source_name: str, category: str) -> List[TrainingQAPair]:
+        """Convert any JSONL file with id/title/content/metadata format."""
+        pairs = []
+        
+        if not input_file.exists():
+            return pairs
+        
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    item = json.loads(line)
+                    pairs.extend(cls._item_to_qa(item, source_name, category))
+                except json.JSONDecodeError:
+                    continue
+        
+        return pairs
+    
+    @classmethod
+    def _item_to_qa(cls, item: Dict, source_name: str, category: str) -> List[TrainingQAPair]:
+        """Convert a single item to QA pairs."""
+        pairs = []
+        
+        title = item.get("title", "")
+        content = item.get("content", "")
+        
+        if not title or not content or len(content) < 50:
+            return pairs
+        
+        # Generate a question based on the title
+        pairs.append(TrainingQAPair(
+            question=f"What can you tell me about {title}?",
+            answer=content[:1500],
+            category=category,
+            source=source_name,
+        ))
+        
+        return pairs
+
+
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
 class IngestedDataConverter:
     """
     Main converter that processes all ingested data sources
     and creates training-ready QA pairs.
+<<<<<<< HEAD
+=======
+    Handles errors gracefully - skips sources that fail.
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
     """
     
     def __init__(
@@ -417,8 +467,21 @@ class IngestedDataConverter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.all_pairs: List[TrainingQAPair] = []
     
+<<<<<<< HEAD
     def convert_all(self) -> None:
         """Convert all ingested data sources."""
+=======
+    def _safe_convert(self, converter_func, *args, source_name: str = "Unknown") -> List[TrainingQAPair]:
+        """Safely run a converter, catching any errors."""
+        try:
+            return converter_func(*args)
+        except Exception as e:
+            print(f"  WARNING: Error converting {source_name}: {e}")
+            return []
+    
+    def convert_all(self) -> None:
+        """Convert all ingested data sources with error handling."""
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
         print("=" * 60)
         print("Converting Ingested Data to Training Format")
         print("=" * 60)
@@ -426,38 +489,173 @@ class IngestedDataConverter:
         # PubMed
         pubmed_file = self.kb_dir / "pubmed" / "articles.jsonl"
         if pubmed_file.exists():
+<<<<<<< HEAD
             pairs = PubMedConverter.convert(pubmed_file)
+=======
+            pairs = self._safe_convert(PubMedConverter.convert, pubmed_file, source_name="PubMed")
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             self.all_pairs.extend(pairs)
             print(f"PubMed: {len(pairs)} QA pairs")
         
         # Drugs (OpenFDA)
         drugs_file = self.kb_dir / "drugs" / "drugs.jsonl"
         if drugs_file.exists():
+<<<<<<< HEAD
             pairs = DrugConverter.convert(drugs_file)
+=======
+            pairs = self._safe_convert(DrugConverter.convert, drugs_file, source_name="Drugs")
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             self.all_pairs.extend(pairs)
             print(f"Drugs: {len(pairs)} QA pairs")
         
         # Clinical Trials
         trials_file = self.kb_dir / "clinical_trials" / "trials.jsonl"
         if trials_file.exists():
+<<<<<<< HEAD
             pairs = ClinicalTrialsConverter.convert(trials_file)
+=======
+            pairs = self._safe_convert(ClinicalTrialsConverter.convert, trials_file, source_name="ClinicalTrials")
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             self.all_pairs.extend(pairs)
             print(f"Clinical Trials: {len(pairs)} QA pairs")
         
         # RxNorm
         rxnorm_file = self.kb_dir / "rxnorm" / "drugs.jsonl"
         if rxnorm_file.exists():
+<<<<<<< HEAD
             pairs = RxNormConverter.convert(rxnorm_file)
+=======
+            pairs = self._safe_convert(RxNormConverter.convert, rxnorm_file, source_name="RxNorm")
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             self.all_pairs.extend(pairs)
             print(f"RxNorm: {len(pairs)} QA pairs")
         
         # ICD-10
         icd_file = self.kb_dir / "who" / "icd_codes.jsonl"
         if icd_file.exists():
+<<<<<<< HEAD
             pairs = ICDConverter.convert(icd_file)
             self.all_pairs.extend(pairs)
             print(f"ICD-10: {len(pairs)} QA pairs")
         
+=======
+            pairs = self._safe_convert(ICDConverter.convert, icd_file, source_name="ICD-10")
+            self.all_pairs.extend(pairs)
+            print(f"ICD-10: {len(pairs)} QA pairs")
+        
+        # NEW SOURCES - Use generic converter for standard JSONL format
+        
+        # Kaggle datasets
+        kaggle_file = self.kb_dir / "kaggle" / "datasets.jsonl"
+        if kaggle_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, kaggle_file, "Kaggle", "dataset",
+                source_name="Kaggle"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"Kaggle: {len(pairs)} QA pairs")
+        
+        # MedlinePlus
+        medlineplus_file = self.kb_dir / "medlineplus" / "topics.jsonl"
+        if medlineplus_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, medlineplus_file, "MedlinePlus", "health_info",
+                source_name="MedlinePlus"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"MedlinePlus: {len(pairs)} QA pairs")
+        
+        # Open Targets - diseases
+        opentargets_diseases = self.kb_dir / "opentargets" / "diseases.jsonl"
+        if opentargets_diseases.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, opentargets_diseases, "OpenTargets", "disease",
+                source_name="OpenTargets Diseases"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"Open Targets Diseases: {len(pairs)} QA pairs")
+        
+        # Open Targets - drugs
+        opentargets_drugs = self.kb_dir / "opentargets" / "drugs.jsonl"
+        if opentargets_drugs.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, opentargets_drugs, "OpenTargets", "drug",
+                source_name="OpenTargets Drugs"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"Open Targets Drugs: {len(pairs)} QA pairs")
+        
+        # UMLS
+        umls_file = self.kb_dir / "umls" / "concepts.jsonl"
+        if umls_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, umls_file, "UMLS", "terminology",
+                source_name="UMLS"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"UMLS: {len(pairs)} QA pairs")
+        
+        # SNOMED CT
+        snomed_file = self.kb_dir / "snomed" / "concepts.jsonl"
+        if snomed_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, snomed_file, "SNOMED CT", "terminology",
+                source_name="SNOMED CT"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"SNOMED CT: {len(pairs)} QA pairs")
+        
+        # Orphanet
+        orphanet_file = self.kb_dir / "orphanet" / "rare_diseases.jsonl"
+        if orphanet_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, orphanet_file, "Orphanet", "rare_disease",
+                source_name="Orphanet"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"Orphanet: {len(pairs)} QA pairs")
+        
+        # DisGeNET
+        disgenet_file = self.kb_dir / "disgenet" / "gene_disease_associations.jsonl"
+        if disgenet_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, disgenet_file, "DisGeNET", "gene_disease",
+                source_name="DisGeNET"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"DisGeNET: {len(pairs)} QA pairs")
+        
+        # ChEMBL molecules
+        chembl_molecules = self.kb_dir / "chembl" / "molecules.jsonl"
+        if chembl_molecules.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, chembl_molecules, "ChEMBL", "drug",
+                source_name="ChEMBL Molecules"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"ChEMBL Molecules: {len(pairs)} QA pairs")
+        
+        # ChEMBL targets
+        chembl_targets = self.kb_dir / "chembl" / "targets.jsonl"
+        if chembl_targets.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, chembl_targets, "ChEMBL", "target",
+                source_name="ChEMBL Targets"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"ChEMBL Targets: {len(pairs)} QA pairs")
+        
+        # UniProt
+        uniprot_file = self.kb_dir / "uniprot" / "proteins.jsonl"
+        if uniprot_file.exists():
+            pairs = self._safe_convert(
+                GenericJSONLConverter.convert, uniprot_file, "UniProt", "protein",
+                source_name="UniProt"
+            )
+            self.all_pairs.extend(pairs)
+            print(f"UniProt: {len(pairs)} QA pairs")
+        
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
         print(f"\nTotal QA pairs: {len(self.all_pairs)}")
     
     def deduplicate(self) -> None:

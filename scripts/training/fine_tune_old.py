@@ -1,7 +1,6 @@
 """
 UMI Medical Model Fine-Tuning Pipeline
 Fine-tunes Mistral-7B on medical domain using LoRA/QLoRA
-Compatible with latest trl and transformers versions
 """
 
 import os
@@ -18,7 +17,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
     Trainer,
-    DataCollatorForLanguageModeling,
+    DataCollatorForSeq2Seq,
 )
 from peft import (
     LoraConfig,
@@ -26,6 +25,7 @@ from peft import (
     prepare_model_for_kbit_training,
     TaskType,
 )
+from trl import SFTTrainer
 
 
 @dataclass
@@ -97,9 +97,8 @@ Key principles:
 
 You are NOT a replacement for professional medical advice."""
 
-    def __init__(self, tokenizer, max_length: int = 2048):
+    def __init__(self, tokenizer):
         self.tokenizer = tokenizer
-        self.max_length = max_length
     
     def format_chat(self, example: Dict[str, Any]) -> str:
         """Format a single example for training."""
@@ -141,24 +140,11 @@ You are NOT a replacement for professional medical advice."""
             tokenize=False,
             add_generation_prompt=False,
         )
-    
-    def tokenize(self, text: str) -> Dict[str, Any]:
-        """Tokenize formatted text."""
-        result = self.tokenizer(
-            text,
-            truncation=True,
-            max_length=self.max_length,
-            padding="max_length",
-            return_tensors=None,
-        )
-        result["labels"] = result["input_ids"].copy()
-        return result
 
 
 class UMIFineTuner:
     """
     Fine-tuning pipeline for UMI medical model.
-    Uses standard Trainer instead of SFTTrainer for better compatibility.
     """
     
     def __init__(self, config: UMITrainingConfig):
@@ -257,40 +243,26 @@ class UMIFineTuner:
         if val_dataset:
             print(f"Val samples: {len(val_dataset)}")
         
-        # Format and tokenize data
-        formatter = MedicalChatFormatter(self.tokenizer, self.config.max_seq_length)
+        # Format data
+        formatter = MedicalChatFormatter(self.tokenizer)
         
-        def process_sample(example):
-            # Format to text
+        def format_sample(example):
             if "messages" in example:
                 text = formatter.format_chat(example)
             else:
                 text = formatter.format_instruction(example)
-            
-            # Tokenize
-            return formatter.tokenize(text)
+            return {"text": text}
         
-        # Remove original columns and add tokenized versions
-        train_dataset = train_dataset.map(
-            process_sample,
-            remove_columns=train_dataset.column_names,
-            desc="Tokenizing train data",
-        )
-        
+        train_dataset = train_dataset.map(format_sample)
         if val_dataset:
-            val_dataset = val_dataset.map(
-                process_sample,
-                remove_columns=val_dataset.column_names,
-                desc="Tokenizing val data",
-            )
+            val_dataset = val_dataset.map(format_sample)
         
         return train_dataset, val_dataset
     
     def setup_trainer(self, train_dataset, val_dataset) -> None:
-        """Configure the Trainer."""
+        """Configure the SFT trainer."""
         print("Setting up trainer...")
         
-        # Training arguments
         training_args = TrainingArguments(
             output_dir=self.config.output_dir,
             num_train_epochs=self.config.num_train_epochs,
@@ -315,22 +287,15 @@ class UMIFineTuner:
             seed=self.config.seed,
             gradient_checkpointing=True,
             gradient_checkpointing_kwargs={"use_reentrant": False},
-            remove_unused_columns=False,
         )
         
-        # Data collator for language modeling
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=self.tokenizer,
-            mlm=False,
-        )
-        
-        # Use standard Trainer
-        self.trainer = Trainer(
+        self.trainer = SFTTrainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
-            data_collator=data_collator,
+            processing_class=self.tokenizer,
+            packing=False,
         )
     
     def train(self) -> None:

@@ -419,22 +419,27 @@ class PubMedIngestionPipeline:
         self.client = PubMedClient(api_key=api_key)
         self.articles: List[PubMedArticle] = []
     
-    async def fetch_topic(self, topic: str, max_results: int = 200) -> List[PubMedArticle]:
+    async def fetch_topic(self, topic: str, max_results: int = None) -> List[PubMedArticle]:  # No limit by default
         """Fetch articles for a specific topic with multiple query strategies."""
         all_articles = []
         seen_pmids = set()
         
+        # Calculate per-strategy limits (or use large defaults if no limit)
+        limit1 = (max_results // 2) if max_results else 500
+        limit2 = (max_results // 3) if max_results else 300
+        limit3 = (max_results // 4) if max_results else 200
+        
         # Strategy 1: High-quality reviews, guidelines, meta-analyses (most recent)
         query1 = f'({topic}) AND (systematic review[pt] OR guideline[pt] OR meta-analysis[pt] OR practice guideline[pt]) AND english[la] AND ("last 10 years"[dp])'
-        pmids1 = await self.client.search(query1, max_results=max_results // 2, sort="pub_date")
+        pmids1 = await self.client.search(query1, max_results=limit1, sort="pub_date")
         
         # Strategy 2: Clinical trials and research articles
         query2 = f'({topic}) AND (clinical trial[pt] OR randomized controlled trial[pt]) AND english[la] AND ("last 5 years"[dp])'
-        pmids2 = await self.client.search(query2, max_results=max_results // 3, sort="relevance")
+        pmids2 = await self.client.search(query2, max_results=limit2, sort="relevance")
         
         # Strategy 3: Recent high-impact articles (any type)
         query3 = f'({topic}) AND english[la] AND ("last 2 years"[dp])'
-        pmids3 = await self.client.search(query3, max_results=max_results // 4, sort="relevance")
+        pmids3 = await self.client.search(query3, max_results=limit3, sort="relevance")
         
         # Combine and deduplicate PMIDs
         all_pmids = []
@@ -459,7 +464,7 @@ class PubMedIngestionPipeline:
         
         return all_articles
     
-    async def run(self, max_per_topic: int = 50) -> None:
+    async def run(self, max_per_topic: int = None) -> None:  # No limit by default
         """Run the full ingestion pipeline."""
         print("=" * 60)
         print("UMI PubMed Ingestion Pipeline")
@@ -563,10 +568,10 @@ class PubMedIngestionPipeline:
 
 
 async def main():
-    """Run the PubMed ingestion pipeline with maximum data collection."""
+    """Run the PubMed ingestion pipeline with no limits."""
     pipeline = PubMedIngestionPipeline()
-    # Increased to 200 articles per topic for comprehensive coverage
-    await pipeline.run(max_per_topic=200)
+    # No limit - fetch all available articles
+    await pipeline.run(max_per_topic=None)
     
     # Optionally index to RAG
     # await pipeline.index_to_rag()

@@ -505,7 +505,7 @@ class DrugIngestionPipeline:
         self.client = OpenFDAClient(api_key=api_key)
         self.drugs: List[DrugInfo] = []
     
-    async def fetch_category(self, category: str, limit: int = 50) -> List[DrugInfo]:
+    async def fetch_category(self, category: str, limit: int = None) -> List[DrugInfo]:  # No limit by default
         """Fetch drugs for a specific category."""
         query = f'openfda.pharm_class_epc:"{category}"'
         
@@ -537,7 +537,7 @@ class DrugIngestionPipeline:
             print(f"Error fetching drug {name}: {e}")
             return None
     
-    async def run(self, max_per_category: int = 30) -> None:
+    async def run(self, max_per_category: int = None) -> None:  # No limit by default
         """Run the full ingestion pipeline."""
         print("=" * 60)
         print("UMI Drug Data Ingestion Pipeline")
@@ -672,10 +672,10 @@ class DrugIngestionPipeline:
 
 
 async def main():
-    """Run the drug ingestion pipeline with maximum data collection."""
+    """Run the drug ingestion pipeline with no limits."""
     pipeline = DrugIngestionPipeline()
-    # Increased to 100 drugs per category for comprehensive coverage
-    await pipeline.run(max_per_category=100)
+    # No limit - fetch all available drugs
+    await pipeline.run(max_per_category=None)
 
 
 if __name__ == "__main__":

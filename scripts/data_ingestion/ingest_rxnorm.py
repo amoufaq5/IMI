@@ -193,7 +193,7 @@ class RxNormClient:
             
             ndc_group = data.get("ndcGroup", {})
             ndc_list = ndc_group.get("ndcList", {}).get("ndc", [])
-            return ndc_list[:20]  # Limit to 20 NDCs
+            return ndc_list  # No limit on NDCs
         except Exception as e:
             return []
     
@@ -214,7 +214,7 @@ class RxNormClient:
                 if class_name and class_name not in classes:
                     classes.append(class_name)
             
-            return classes[:10]  # Limit to 10 classes
+            return classes  # No limit on classes
         except Exception as e:
             return []
     
@@ -290,7 +290,7 @@ class RxNormIngestionPipeline:
         # Search for the drug
         search_results = await self.client.search_drugs(name)
         
-        for result in search_results[:5]:  # Limit to top 5 results per name
+        for result in search_results:  # No limit - process all results
             rxcui = result.get("rxcui", "")
             
             if not rxcui or rxcui in self.processed_rxcuis:
@@ -332,7 +332,7 @@ class RxNormIngestionPipeline:
                 strengths=strengths,
                 ndc_codes=ndc_codes,
                 drug_classes=drug_classes,
-                interactions=interactions[:20],  # Limit interactions
+                interactions=interactions,  # No limit on interactions
                 related_drugs=[r for r in related if r.get("tty") in ("SBD", "SCD")][:10],
             )
             drugs.append(drug)

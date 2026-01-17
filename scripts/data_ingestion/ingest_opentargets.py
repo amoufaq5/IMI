@@ -1,11 +1,20 @@
 """
 UMI Open Targets Data Ingestion Pipeline
+<<<<<<< HEAD
 Fetches drug-target-disease associations - NO LIMITS
+=======
+Fetches drug-target-disease associations from Open Targets Platform
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
 """
 
 import asyncio
 import json
+<<<<<<< HEAD
 from dataclasses import dataclass
+=======
+from dataclasses import dataclass, field
+from datetime import datetime
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,14 +22,39 @@ import httpx
 from tqdm import tqdm
 
 
+<<<<<<< HEAD
 class OpenTargetsClient:
     """Client for Open Targets GraphQL API."""
+=======
+@dataclass
+class DrugTargetAssociation:
+    """Represents a drug-target-disease association."""
+    drug_id: str
+    drug_name: str
+    target_id: str
+    target_name: str
+    disease_id: str
+    disease_name: str
+    association_score: float
+    evidence_count: int
+    mechanism_of_action: str
+    clinical_phase: int
+    approved: bool
+
+
+class OpenTargetsClient:
+    """
+    Client for Open Targets Platform GraphQL API.
+    https://platform.opentargets.org/
+    """
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
     
     BASE_URL = "https://api.platform.opentargets.org/api/v4/graphql"
     
     def __init__(self):
         self.client = httpx.AsyncClient(timeout=60.0)
     
+<<<<<<< HEAD
     async def close(self):
         await self.client.aclose()
     
@@ -41,6 +75,12 @@ class OpenTargetsClient:
         """Search for diseases."""
         gql = """
         query SearchDiseases($query: String!, $size: Int!) {
+=======
+    async def search_diseases(self, query: str, size: int = 100) -> List[Dict[str, Any]]:
+        """Search for diseases."""
+        graphql_query = """
+        query searchDiseases($query: String!, $size: Int!) {
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             search(queryString: $query, entityNames: ["disease"], page: {size: $size, index: 0}) {
                 hits {
                     id
@@ -48,6 +88,7 @@ class OpenTargetsClient:
                     description
                     entity
                 }
+<<<<<<< HEAD
             }
         }
         """
@@ -96,6 +137,63 @@ class OpenTargetsClient:
         """Search for drugs."""
         gql = """
         query SearchDrugs($query: String!, $size: Int!) {
+=======
+                total
+            }
+        }
+        """
+        
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                json={
+                    "query": graphql_query,
+                    "variables": {"query": query, "size": size},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("search", {}).get("hits", [])
+        except Exception as e:
+            print(f"Error searching diseases: {e}")
+            return []
+    
+    async def search_targets(self, query: str, size: int = 100) -> List[Dict[str, Any]]:
+        """Search for drug targets (genes/proteins)."""
+        graphql_query = """
+        query searchTargets($query: String!, $size: Int!) {
+            search(queryString: $query, entityNames: ["target"], page: {size: $size, index: 0}) {
+                hits {
+                    id
+                    name
+                    description
+                    entity
+                }
+                total
+            }
+        }
+        """
+        
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                json={
+                    "query": graphql_query,
+                    "variables": {"query": query, "size": size},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("search", {}).get("hits", [])
+        except Exception as e:
+            print(f"Error searching targets: {e}")
+            return []
+    
+    async def search_drugs(self, query: str, size: int = 100) -> List[Dict[str, Any]]:
+        """Search for drugs."""
+        graphql_query = """
+        query searchDrugs($query: String!, $size: Int!) {
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
             search(queryString: $query, entityNames: ["drug"], page: {size: $size, index: 0}) {
                 hits {
                     id
@@ -103,6 +201,7 @@ class OpenTargetsClient:
                     description
                     entity
                 }
+<<<<<<< HEAD
             }
         }
         """
@@ -333,6 +432,423 @@ class OpenTargetsIngestionPipeline:
 
 
 async def main():
+=======
+                total
+            }
+        }
+        """
+        
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                json={
+                    "query": graphql_query,
+                    "variables": {"query": query, "size": size},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("search", {}).get("hits", [])
+        except Exception as e:
+            print(f"Error searching drugs: {e}")
+            return []
+    
+    async def get_disease_associations(
+        self,
+        disease_id: str,
+        size: int = 500,
+    ) -> Dict[str, Any]:
+        """Get target associations for a disease."""
+        graphql_query = """
+        query diseaseAssociations($diseaseId: String!, $size: Int!) {
+            disease(efoId: $diseaseId) {
+                id
+                name
+                description
+                therapeuticAreas {
+                    id
+                    name
+                }
+                associatedTargets(page: {size: $size, index: 0}) {
+                    count
+                    rows {
+                        target {
+                            id
+                            approvedSymbol
+                            approvedName
+                        }
+                        score
+                        datatypeScores {
+                            id
+                            score
+                        }
+                    }
+                }
+            }
+        }
+        """
+        
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                json={
+                    "query": graphql_query,
+                    "variables": {"diseaseId": disease_id, "size": size},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("disease", {})
+        except Exception as e:
+            print(f"Error getting disease associations: {e}")
+            return {}
+    
+    async def get_drug_info(self, drug_id: str) -> Dict[str, Any]:
+        """Get detailed drug information."""
+        graphql_query = """
+        query drugInfo($drugId: String!) {
+            drug(chemblId: $drugId) {
+                id
+                name
+                description
+                drugType
+                maximumClinicalTrialPhase
+                hasBeenWithdrawn
+                mechanismsOfAction {
+                    rows {
+                        mechanismOfAction
+                        targets {
+                            id
+                            approvedSymbol
+                        }
+                    }
+                }
+                indications {
+                    rows {
+                        disease {
+                            id
+                            name
+                        }
+                        maxPhaseForIndication
+                    }
+                }
+                linkedDiseases {
+                    rows {
+                        id
+                        name
+                    }
+                }
+                linkedTargets {
+                    rows {
+                        id
+                        approvedSymbol
+                        approvedName
+                    }
+                }
+            }
+        }
+        """
+        
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                json={
+                    "query": graphql_query,
+                    "variables": {"drugId": drug_id},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("drug", {})
+        except Exception as e:
+            print(f"Error getting drug info: {e}")
+            return {}
+    
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+
+
+class OpenTargetsIngestionPipeline:
+    """
+    Pipeline for ingesting Open Targets data into UMI knowledge base.
+    """
+    
+    # Diseases to fetch associations for
+    DISEASE_QUERIES = [
+        # Major diseases
+        "diabetes mellitus", "type 2 diabetes", "type 1 diabetes",
+        "hypertension", "coronary artery disease", "heart failure",
+        "atrial fibrillation", "stroke", "myocardial infarction",
+        "chronic kidney disease", "liver cirrhosis", "hepatitis",
+        "asthma", "COPD", "pulmonary fibrosis", "lung cancer",
+        "breast cancer", "colorectal cancer", "prostate cancer",
+        "pancreatic cancer", "ovarian cancer", "leukemia", "lymphoma",
+        "melanoma", "glioblastoma", "hepatocellular carcinoma",
+        
+        # Neurological
+        "Alzheimer disease", "Parkinson disease", "multiple sclerosis",
+        "amyotrophic lateral sclerosis", "Huntington disease",
+        "epilepsy", "migraine", "neuropathic pain", "schizophrenia",
+        "major depressive disorder", "bipolar disorder", "anxiety",
+        
+        # Autoimmune
+        "rheumatoid arthritis", "systemic lupus erythematosus",
+        "psoriasis", "inflammatory bowel disease", "Crohn disease",
+        "ulcerative colitis", "multiple sclerosis", "type 1 diabetes",
+        
+        # Infectious
+        "HIV infection", "hepatitis B", "hepatitis C", "tuberculosis",
+        "malaria", "COVID-19", "influenza",
+        
+        # Metabolic
+        "obesity", "metabolic syndrome", "hyperlipidemia",
+        "non-alcoholic fatty liver disease", "gout",
+        
+        # Rare diseases
+        "cystic fibrosis", "sickle cell disease", "hemophilia",
+        "muscular dystrophy", "spinal muscular atrophy",
+        "Fabry disease", "Gaucher disease", "phenylketonuria",
+    ]
+    
+    # Drug queries
+    DRUG_QUERIES = [
+        "metformin", "insulin", "atorvastatin", "lisinopril",
+        "amlodipine", "omeprazole", "levothyroxine", "metoprolol",
+        "losartan", "gabapentin", "sertraline", "fluoxetine",
+        "adalimumab", "infliximab", "rituximab", "trastuzumab",
+        "pembrolizumab", "nivolumab", "imatinib", "erlotinib",
+        "sorafenib", "sunitinib", "vemurafenib", "crizotinib",
+        "ibrutinib", "venetoclax", "ruxolitinib", "tofacitinib",
+    ]
+    
+    def __init__(
+        self,
+        output_dir: str = "data/knowledge_base/opentargets",
+    ):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.client = OpenTargetsClient()
+        self.diseases: List[Dict[str, Any]] = []
+        self.drugs: List[Dict[str, Any]] = []
+        self.associations: List[Dict[str, Any]] = []
+    
+    async def fetch_disease_data(self, query: str) -> List[Dict[str, Any]]:
+        """Fetch disease data and associations."""
+        results = []
+        
+        # Search for diseases
+        diseases = await self.client.search_diseases(query, size=20)
+        
+        for disease in diseases:
+            disease_id = disease.get("id", "")
+            if not disease_id:
+                continue
+            
+            # Get associations
+            disease_data = await self.client.get_disease_associations(disease_id)
+            if disease_data:
+                results.append(disease_data)
+            
+            await asyncio.sleep(0.3)  # Rate limiting
+        
+        return results
+    
+    async def fetch_drug_data(self, query: str) -> List[Dict[str, Any]]:
+        """Fetch drug data."""
+        results = []
+        
+        # Search for drugs
+        drugs = await self.client.search_drugs(query, size=10)
+        
+        for drug in drugs:
+            drug_id = drug.get("id", "")
+            if not drug_id:
+                continue
+            
+            # Get detailed info
+            drug_data = await self.client.get_drug_info(drug_id)
+            if drug_data:
+                results.append(drug_data)
+            
+            await asyncio.sleep(0.3)  # Rate limiting
+        
+        return results
+    
+    async def run(self) -> None:
+        """Run the full ingestion pipeline."""
+        print("=" * 60)
+        print("UMI Open Targets Ingestion Pipeline")
+        print("=" * 60)
+        
+        # Fetch disease data
+        print("\nFetching disease associations...")
+        for query in tqdm(self.DISEASE_QUERIES, desc="Diseases"):
+            try:
+                data = await self.fetch_disease_data(query)
+                self.diseases.extend(data)
+                print(f"  {query}: {len(data)} diseases")
+            except Exception as e:
+                print(f"  Error: {e}")
+            
+            await asyncio.sleep(0.5)
+        
+        # Fetch drug data
+        print("\nFetching drug data...")
+        for query in tqdm(self.DRUG_QUERIES, desc="Drugs"):
+            try:
+                data = await self.fetch_drug_data(query)
+                self.drugs.extend(data)
+                print(f"  {query}: {len(data)} drugs")
+            except Exception as e:
+                print(f"  Error: {e}")
+            
+            await asyncio.sleep(0.5)
+        
+        # Deduplicate
+        seen_disease_ids = set()
+        unique_diseases = []
+        for d in self.diseases:
+            did = d.get("id", "")
+            if did and did not in seen_disease_ids:
+                seen_disease_ids.add(did)
+                unique_diseases.append(d)
+        self.diseases = unique_diseases
+        
+        seen_drug_ids = set()
+        unique_drugs = []
+        for d in self.drugs:
+            did = d.get("id", "")
+            if did and did not in seen_drug_ids:
+                seen_drug_ids.add(did)
+                unique_drugs.append(d)
+        self.drugs = unique_drugs
+        
+        print(f"\nTotal unique diseases: {len(self.diseases)}")
+        print(f"Total unique drugs: {len(self.drugs)}")
+        
+        # Save
+        await self.save()
+        
+        # Close client
+        await self.client.close()
+    
+    async def save(self) -> None:
+        """Save data to disk."""
+        # Save diseases
+        diseases_file = self.output_dir / "diseases.jsonl"
+        with open(diseases_file, 'w', encoding='utf-8') as f:
+            for disease in self.diseases:
+                # Build content
+                content_parts = [
+                    f"Disease: {disease.get('name', '')}",
+                    f"ID: {disease.get('id', '')}",
+                    "",
+                    disease.get("description", ""),
+                    "",
+                ]
+                
+                # Add therapeutic areas
+                therapeutic_areas = disease.get("therapeuticAreas", [])
+                if therapeutic_areas:
+                    content_parts.append("Therapeutic Areas:")
+                    for ta in therapeutic_areas:
+                        content_parts.append(f"- {ta.get('name', '')}")
+                    content_parts.append("")
+                
+                # Add top target associations
+                assoc = disease.get("associatedTargets", {})
+                rows = assoc.get("rows", [])[:20]
+                if rows:
+                    content_parts.append(f"Top Target Associations ({assoc.get('count', 0)} total):")
+                    for row in rows:
+                        target = row.get("target", {})
+                        score = row.get("score", 0)
+                        content_parts.append(
+                            f"- {target.get('approvedSymbol', '')} ({target.get('approvedName', '')}): score={score:.3f}"
+                        )
+                
+                doc = {
+                    "id": f"opentargets_disease_{disease.get('id', '')}",
+                    "title": disease.get("name", ""),
+                    "content": "\n".join(content_parts),
+                    "metadata": {
+                        "disease_id": disease.get("id", ""),
+                        "therapeutic_areas": [ta.get("name", "") for ta in therapeutic_areas],
+                        "target_count": assoc.get("count", 0),
+                        "source": "Open Targets",
+                    },
+                }
+                f.write(json.dumps(doc, ensure_ascii=False) + '\n')
+        
+        print(f"Saved diseases to: {diseases_file}")
+        
+        # Save drugs
+        drugs_file = self.output_dir / "drugs.jsonl"
+        with open(drugs_file, 'w', encoding='utf-8') as f:
+            for drug in self.drugs:
+                content_parts = [
+                    f"Drug: {drug.get('name', '')}",
+                    f"ID: {drug.get('id', '')}",
+                    f"Type: {drug.get('drugType', '')}",
+                    f"Max Clinical Phase: {drug.get('maximumClinicalTrialPhase', '')}",
+                    f"Withdrawn: {drug.get('hasBeenWithdrawn', False)}",
+                    "",
+                    drug.get("description", "") or "",
+                    "",
+                ]
+                
+                # Mechanisms of action
+                moa = drug.get("mechanismsOfAction", {}).get("rows", [])
+                if moa:
+                    content_parts.append("Mechanisms of Action:")
+                    for m in moa:
+                        targets = [t.get("approvedSymbol", "") for t in m.get("targets", [])]
+                        content_parts.append(f"- {m.get('mechanismOfAction', '')}: {', '.join(targets)}")
+                    content_parts.append("")
+                
+                # Indications
+                indications = drug.get("indications", {}).get("rows", [])
+                if indications:
+                    content_parts.append("Indications:")
+                    for ind in indications[:20]:
+                        disease = ind.get("disease", {})
+                        phase = ind.get("maxPhaseForIndication", "")
+                        content_parts.append(f"- {disease.get('name', '')} (Phase {phase})")
+                
+                doc = {
+                    "id": f"opentargets_drug_{drug.get('id', '')}",
+                    "title": drug.get("name", ""),
+                    "content": "\n".join(content_parts),
+                    "metadata": {
+                        "drug_id": drug.get("id", ""),
+                        "drug_type": drug.get("drugType", ""),
+                        "max_phase": drug.get("maximumClinicalTrialPhase", 0),
+                        "withdrawn": drug.get("hasBeenWithdrawn", False),
+                        "source": "Open Targets",
+                    },
+                }
+                f.write(json.dumps(doc, ensure_ascii=False) + '\n')
+        
+        print(f"Saved drugs to: {drugs_file}")
+        
+        # Save statistics
+        stats = {
+            "total_diseases": len(self.diseases),
+            "total_drugs": len(self.drugs),
+            "ingestion_date": datetime.now().isoformat(),
+            "disease_queries": self.DISEASE_QUERIES,
+            "drug_queries": self.DRUG_QUERIES,
+        }
+        
+        stats_file = self.output_dir / "stats.json"
+        with open(stats_file, 'w') as f:
+            json.dump(stats, f, indent=2)
+
+
+async def main():
+    """Run the Open Targets ingestion pipeline."""
+>>>>>>> 66878e9 (Expand data ingestion: 9 new scrapers, Kaggle support, remove caps, robust error handling)
     pipeline = OpenTargetsIngestionPipeline()
     await pipeline.run()
 
