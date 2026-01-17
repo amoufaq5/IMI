@@ -25,6 +25,13 @@ Complete guide for deploying UMI Medical LLM on RunPod with GPU-accelerated AI i
 - **Scalable**: Spin up multiple pods as needed
 - **Persistent Storage**: Volumes survive pod restarts
 
+## New Features (January 2026)
+
+- **Dosage Calculator**: Weight/age-based dosing with renal/hepatic adjustments
+- **Lab Interpreter**: Automated lab result analysis with clinical guidance
+- **ICD-10 Coding**: AI-assisted diagnosis code suggestions
+- **Enhanced Training Data**: MedMCQA, BioASQ, ICD-10, LOINC datasets
+
 ---
 
 ## Architecture Overview

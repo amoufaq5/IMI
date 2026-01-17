@@ -68,6 +68,9 @@ UMI (Universal Medical Intelligence) is an AI-powered medical consultation and p
 
 - **AI Medical Consultation**: ASMETHOD-based symptom assessment
 - **Drug Information**: Search, interactions, OTC recommendations
+- **Dosage Calculator**: Weight/age-based dosing, renal/hepatic adjustments
+- **Lab Interpreter**: Lab result analysis with clinical guidance
+- **ICD-10 Coding**: Diagnosis code lookup and AI-assisted suggestions
 - **Pharma QA/QC**: Document generation, facility compliance
 - **Medical Imaging**: X-ray, dermoscopy analysis (optional)
 - **RAG Pipeline**: Medical knowledge retrieval
@@ -724,6 +727,45 @@ curl -s -X POST $BASE_URL/api/v1/drugs/interactions \
   -d '{
     "drug_names": ["aspirin", "ibuprofen"]
   }' | jq
+
+# 7. Calculate medication dosage
+echo "=== Dosage Calculator ==="
+curl -s -X POST $BASE_URL/api/v1/clinical/dosage/calculate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "drug_name": "amoxicillin",
+    "patient": {
+      "age_years": 35,
+      "weight_kg": 70,
+      "sex": "male",
+      "serum_creatinine": 1.0
+    }
+  }' | jq
+
+# 8. Interpret lab results
+echo "=== Lab Interpreter ==="
+curl -s -X POST $BASE_URL/api/v1/clinical/labs/interpret \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "results": [
+      {"test_name": "glucose", "value": 126},
+      {"test_name": "hemoglobin", "value": 14.5},
+      {"test_name": "potassium", "value": 4.2}
+    ],
+    "sex": "male"
+  }' | jq
+
+# 9. Get ICD-10 code suggestions
+echo "=== ICD-10 Coding ==="
+curl -s -X POST $BASE_URL/api/v1/clinical/icd10/suggest \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symptoms": "patient presents with chest pain and shortness of breath",
+    "diagnoses": ["hypertension"]
+  }' | jq
 ```
 
 ### OpenAPI Documentation
@@ -1025,7 +1067,7 @@ python scripts/data_ingestion/ingest_drugbank.py
 
 # === Training (Optional) ===
 
-# Download training datasets
+# Download training datasets (includes MedMCQA, BioASQ, ICD-10, LOINC)
 python scripts/training/download_datasets.py
 
 # Prepare training data
@@ -1034,6 +1076,24 @@ python scripts/training/prepare_data.py
 # Fine-tune model
 python scripts/training/fine_tune.py --epochs 3
 ```
+
+### New Clinical Services API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/clinical/dosage/calculate` | POST | Calculate medication dosage |
+| `/api/v1/clinical/dosage/check` | POST | Check if dose is safe |
+| `/api/v1/clinical/dosage/drugs` | GET | List available drugs |
+| `/api/v1/clinical/labs/interpret` | POST | Interpret lab panel |
+| `/api/v1/clinical/labs/interpret/single` | POST | Interpret single lab |
+| `/api/v1/clinical/labs/anion-gap` | POST | Calculate anion gap |
+| `/api/v1/clinical/labs/corrected-calcium` | POST | Calculate corrected calcium |
+| `/api/v1/clinical/labs/tests` | GET | List available lab tests |
+| `/api/v1/clinical/icd10/lookup/{code}` | GET | Look up ICD-10 code |
+| `/api/v1/clinical/icd10/search` | POST | Search ICD-10 codes |
+| `/api/v1/clinical/icd10/suggest` | POST | AI-suggest ICD-10 codes |
+| `/api/v1/clinical/icd10/validate/{code}` | GET | Validate ICD-10 code |
+| `/api/v1/clinical/icd10/encode-encounter` | POST | Code clinical encounter |
 
 ### Important URLs
 

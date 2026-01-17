@@ -123,6 +123,105 @@ def download_chatdoctor():
         print(f"Failed to download ChatDoctor: {e}")
 
 
+def download_bioasq():
+    """Download BioASQ dataset for biomedical QA."""
+    print("\n" + "=" * 50)
+    print("Downloading BioASQ...")
+    print("=" * 50)
+    
+    try:
+        from datasets import load_dataset
+        
+        dataset = load_dataset("rag-datasets/rag-mini-bioasq", "question-answer-passages", split="test")
+        
+        output = "data/raw/bioasq/bioasq_qa.json"
+        Path("data/raw/bioasq").mkdir(parents=True, exist_ok=True)
+        dataset.to_json(output)
+        
+        print(f"Downloaded: {output}")
+        print(f"Total samples: {len(dataset)}")
+    except Exception as e:
+        print(f"Failed to download BioASQ: {e}")
+        print("Manual download: http://bioasq.org/")
+
+
+def download_icd10_codes():
+    """Download ICD-10 codes for diagnosis coding."""
+    print("\n" + "=" * 50)
+    print("Downloading ICD-10 Codes...")
+    print("=" * 50)
+    
+    url = "https://raw.githubusercontent.com/kamillamagna/ICD-10-CSV/master/codes.csv"
+    output = "data/raw/icd10/icd10_codes.csv"
+    
+    try:
+        import requests
+        Path("data/raw/icd10").mkdir(parents=True, exist_ok=True)
+        
+        response = requests.get(url)
+        response.raise_for_status()
+        
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+        
+        print(f"Downloaded: {output}")
+    except Exception as e:
+        print(f"Failed to download ICD-10: {e}")
+        print("Manual download: https://www.cms.gov/medicare/coding/icd10")
+
+
+def download_loinc_common():
+    """Download common LOINC codes for lab interpretation."""
+    print("\n" + "=" * 50)
+    print("Downloading Common LOINC Codes...")
+    print("=" * 50)
+    
+    print("LOINC requires registration for full download.")
+    print("Instructions:")
+    print("1. Go to: https://loinc.org/downloads/")
+    print("2. Create a free account")
+    print("3. Download 'LOINC Table Core'")
+    print("4. Place in: data/raw/loinc/")
+    
+    # Create sample common lab codes
+    common_labs = [
+        {"code": "2345-7", "name": "Glucose", "unit": "mg/dL", "low": 70, "high": 100},
+        {"code": "2160-0", "name": "Creatinine", "unit": "mg/dL", "low": 0.7, "high": 1.3},
+        {"code": "3094-0", "name": "BUN", "unit": "mg/dL", "low": 7, "high": 20},
+        {"code": "2951-2", "name": "Sodium", "unit": "mEq/L", "low": 136, "high": 145},
+        {"code": "2823-3", "name": "Potassium", "unit": "mEq/L", "low": 3.5, "high": 5.0},
+        {"code": "2075-0", "name": "Chloride", "unit": "mEq/L", "low": 98, "high": 106},
+        {"code": "1963-8", "name": "Bicarbonate", "unit": "mEq/L", "low": 22, "high": 29},
+        {"code": "17861-6", "name": "Calcium", "unit": "mg/dL", "low": 8.5, "high": 10.5},
+        {"code": "718-7", "name": "Hemoglobin", "unit": "g/dL", "low": 12.0, "high": 17.5},
+        {"code": "4544-3", "name": "Hematocrit", "unit": "%", "low": 36, "high": 50},
+        {"code": "6690-2", "name": "WBC", "unit": "K/uL", "low": 4.5, "high": 11.0},
+        {"code": "777-3", "name": "Platelets", "unit": "K/uL", "low": 150, "high": 400},
+        {"code": "1742-6", "name": "ALT", "unit": "U/L", "low": 7, "high": 56},
+        {"code": "1920-8", "name": "AST", "unit": "U/L", "low": 10, "high": 40},
+        {"code": "1975-2", "name": "Bilirubin Total", "unit": "mg/dL", "low": 0.1, "high": 1.2},
+        {"code": "2885-2", "name": "Total Protein", "unit": "g/dL", "low": 6.0, "high": 8.3},
+        {"code": "1751-7", "name": "Albumin", "unit": "g/dL", "low": 3.5, "high": 5.0},
+        {"code": "2532-0", "name": "LDH", "unit": "U/L", "low": 140, "high": 280},
+        {"code": "2571-8", "name": "Triglycerides", "unit": "mg/dL", "low": 0, "high": 150},
+        {"code": "2093-3", "name": "Total Cholesterol", "unit": "mg/dL", "low": 0, "high": 200},
+        {"code": "2085-9", "name": "HDL Cholesterol", "unit": "mg/dL", "low": 40, "high": 999},
+        {"code": "13457-7", "name": "LDL Cholesterol", "unit": "mg/dL", "low": 0, "high": 100},
+        {"code": "4548-4", "name": "HbA1c", "unit": "%", "low": 4.0, "high": 5.6},
+        {"code": "3016-3", "name": "TSH", "unit": "mIU/L", "low": 0.4, "high": 4.0},
+        {"code": "14749-6", "name": "Free T4", "unit": "ng/dL", "low": 0.8, "high": 1.8},
+    ]
+    
+    import json
+    output = "data/raw/loinc/common_labs.json"
+    Path("data/raw/loinc").mkdir(parents=True, exist_ok=True)
+    
+    with open(output, 'w') as f:
+        json.dump(common_labs, f, indent=2)
+    
+    print(f"Created common lab reference: {output}")
+
+
 def print_drugbank_instructions():
     """Print instructions for DrugBank."""
     print("\n" + "=" * 50)
@@ -156,6 +255,9 @@ def main():
     download_medmcqa()
     download_medical_meadow()
     download_chatdoctor()
+    download_bioasq()
+    download_icd10_codes()
+    download_loinc_common()
     
     # Print manual download instructions
     download_medqa()

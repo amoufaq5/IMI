@@ -97,7 +97,7 @@ Week 2: AI Model Setup
 Week 3: Core Features
 ├── Day 1-2: User authentication & profiles
 ├── Day 3-4: Consultation API completion
-├── Day 5-6: Drug information integration
+├── Day 5-6: Drug information + Clinical services (dosage, labs, ICD-10)
 └── Day 7: Integration testing
 
 Week 4: Pharma Module
@@ -505,6 +505,24 @@ curl -X POST $BASE_URL/api/v1/consultations \
 # 5. Test drug search
 curl "$BASE_URL/api/v1/drugs/search?q=paracetamol" \
   -H "Authorization: Bearer $TOKEN"
+
+# 6. Test dosage calculator
+curl -X POST $BASE_URL/api/v1/clinical/dosage/calculate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"drug_name":"paracetamol","patient":{"age_years":30,"weight_kg":70,"sex":"male"}}'
+
+# 7. Test lab interpreter
+curl -X POST $BASE_URL/api/v1/clinical/labs/interpret \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"results":[{"test_name":"glucose","value":110}],"sex":"male"}'
+
+# 8. Test ICD-10 coding
+curl -X POST $BASE_URL/api/v1/clinical/icd10/suggest \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"symptoms":"headache and fever"}'
 ```
 
 #### Step 5.2: Monitor GPU Usage
