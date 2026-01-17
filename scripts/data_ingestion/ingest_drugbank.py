@@ -216,47 +216,283 @@ class DrugIngestionPipeline:
     Pipeline for ingesting drug information into UMI knowledge base.
     """
     
-    # Common drug categories to fetch
+    # Comprehensive drug categories to fetch - expanded for maximum coverage
     DRUG_CATEGORIES = [
+        # Pain & Inflammation
         "analgesic",
-        "antibiotic",
-        "antihypertensive",
-        "antidiabetic",
-        "antidepressant",
-        "antihistamine",
-        "proton pump inhibitor",
-        "statin",
-        "beta blocker",
-        "ACE inhibitor",
         "NSAID",
         "opioid",
-        "benzodiazepine",
-        "anticoagulant",
-        "bronchodilator",
-        "corticosteroid",
-        "antipsychotic",
-        "anticonvulsant",
-        "thyroid",
+        "opioid analgesic",
+        "non-opioid analgesic",
+        "muscle relaxant",
+        "local anesthetic",
+        
+        # Cardiovascular
+        "antihypertensive",
+        "beta blocker",
+        "ACE inhibitor",
+        "angiotensin receptor blocker",
+        "calcium channel blocker",
         "diuretic",
+        "loop diuretic",
+        "thiazide diuretic",
+        "potassium-sparing diuretic",
+        "statin",
+        "HMG-CoA reductase inhibitor",
+        "anticoagulant",
+        "antiplatelet",
+        "thrombolytic",
+        "antiarrhythmic",
+        "cardiac glycoside",
+        "vasodilator",
+        "nitrate",
+        "fibrate",
+        
+        # Diabetes & Metabolic
+        "antidiabetic",
+        "insulin",
+        "biguanide",
+        "sulfonylurea",
+        "DPP-4 inhibitor",
+        "SGLT2 inhibitor",
+        "GLP-1 agonist",
+        "thiazolidinedione",
+        "thyroid hormone",
+        "antithyroid",
+        
+        # Respiratory
+        "bronchodilator",
+        "beta-2 agonist",
+        "anticholinergic bronchodilator",
+        "inhaled corticosteroid",
+        "leukotriene inhibitor",
+        "antihistamine",
+        "H1 antihistamine",
+        "decongestant",
+        "antitussive",
+        "expectorant",
+        "mucolytic",
+        
+        # Gastrointestinal
+        "proton pump inhibitor",
+        "H2 blocker",
+        "antacid",
+        "antiemetic",
+        "prokinetic",
+        "laxative",
+        "antidiarrheal",
+        "antispasmodic",
+        "5-HT3 antagonist",
+        
+        # Psychiatric & Neurological
+        "antidepressant",
+        "SSRI",
+        "SNRI",
+        "tricyclic antidepressant",
+        "MAO inhibitor",
+        "antipsychotic",
+        "typical antipsychotic",
+        "atypical antipsychotic",
+        "anxiolytic",
+        "benzodiazepine",
+        "anticonvulsant",
+        "antiepileptic",
+        "mood stabilizer",
+        "stimulant",
+        "ADHD medication",
+        "hypnotic",
+        "sedative",
+        "antiparkinson",
+        "dopamine agonist",
+        "cholinesterase inhibitor",
+        
+        # Anti-infective
+        "antibiotic",
+        "penicillin",
+        "cephalosporin",
+        "fluoroquinolone",
+        "macrolide",
+        "aminoglycoside",
+        "tetracycline",
+        "sulfonamide",
+        "carbapenem",
+        "glycopeptide",
+        "antiviral",
+        "antiretroviral",
+        "antifungal",
+        "azole antifungal",
+        "antimalarial",
+        "antiparasitic",
+        "anthelmintic",
+        "antiprotozoal",
+        
+        # Immunology & Rheumatology
+        "corticosteroid",
+        "glucocorticoid",
+        "immunosuppressant",
+        "DMARD",
+        "biologic DMARD",
+        "TNF inhibitor",
+        "interleukin inhibitor",
+        "JAK inhibitor",
+        "immunomodulator",
+        
+        # Oncology
+        "antineoplastic",
+        "chemotherapy",
+        "alkylating agent",
+        "antimetabolite",
+        "topoisomerase inhibitor",
+        "mitotic inhibitor",
+        "tyrosine kinase inhibitor",
+        "monoclonal antibody",
+        "hormone therapy",
+        "aromatase inhibitor",
+        "antiandrogen",
+        
+        # Hematology
+        "anticoagulant",
+        "direct oral anticoagulant",
+        "heparin",
+        "vitamin K antagonist",
+        "erythropoietin",
+        "colony stimulating factor",
+        "iron supplement",
+        "vitamin B12",
+        "folic acid",
+        
+        # Dermatology
+        "topical corticosteroid",
+        "topical antibiotic",
+        "topical antifungal",
+        "retinoid",
+        "keratolytic",
+        "emollient",
+        
+        # Ophthalmology
+        "ophthalmic antibiotic",
+        "ophthalmic anti-inflammatory",
+        "glaucoma medication",
+        "mydriatic",
+        
+        # Urology
+        "alpha blocker",
+        "5-alpha reductase inhibitor",
+        "phosphodiesterase inhibitor",
+        "urinary antispasmodic",
+        
+        # Obstetrics & Gynecology
+        "contraceptive",
+        "estrogen",
+        "progestin",
+        "oxytocic",
+        "tocolytic",
+        
+        # Miscellaneous
+        "vitamin",
+        "mineral supplement",
+        "electrolyte",
+        "antidote",
+        "chelating agent",
+        "vaccine",
     ]
     
-    # Common OTC drugs to specifically include
+    # Comprehensive OTC drugs to specifically include
     OTC_DRUGS = [
+        # Pain relievers
         "acetaminophen",
         "ibuprofen",
         "aspirin",
         "naproxen",
+        "ketoprofen",
+        "magnesium salicylate",
+        
+        # Allergy & Cold
         "diphenhydramine",
         "loratadine",
         "cetirizine",
-        "omeprazole",
-        "famotidine",
-        "loperamide",
+        "fexofenadine",
+        "chlorpheniramine",
         "pseudoephedrine",
+        "phenylephrine",
+        "oxymetazoline",
         "guaifenesin",
         "dextromethorphan",
+        "benzonatate",
+        
+        # Gastrointestinal
+        "omeprazole",
+        "esomeprazole",
+        "lansoprazole",
+        "famotidine",
+        "ranitidine",
+        "cimetidine",
+        "calcium carbite",
+        "magnesium hydroxide",
+        "aluminum hydroxide",
+        "bismuth subsalicylate",
+        "loperamide",
+        "simethicone",
+        "docusate",
+        "bisacodyl",
+        "polyethylene glycol",
+        "psyllium",
+        "sennosides",
+        
+        # Topical
         "hydrocortisone",
         "bacitracin",
+        "neomycin",
+        "polymyxin B",
+        "benzoyl peroxide",
+        "salicylic acid",
+        "clotrimazole",
+        "miconazole",
+        "terbinafine",
+        "tolnaftate",
+        "lidocaine",
+        "benzocaine",
+        "capsaicin",
+        "menthol",
+        "camphor",
+        
+        # Eye care
+        "artificial tears",
+        "tetrahydrozoline",
+        "naphazoline",
+        "ketotifen",
+        
+        # Sleep aids
+        "melatonin",
+        "doxylamine",
+        "valerian",
+        
+        # Vitamins & Supplements
+        "vitamin D",
+        "vitamin C",
+        "vitamin B12",
+        "folic acid",
+        "iron",
+        "calcium",
+        "magnesium",
+        "zinc",
+        "omega-3",
+        "probiotics",
+        "glucosamine",
+        "chondroitin",
+        
+        # Motion sickness
+        "dimenhydrinate",
+        "meclizine",
+        
+        # Smoking cessation
+        "nicotine",
+        
+        # Weight loss
+        "orlistat",
+        
+        # Diabetes
+        "glucose",
     ]
     
     def __init__(
@@ -436,9 +672,10 @@ class DrugIngestionPipeline:
 
 
 async def main():
-    """Run the drug ingestion pipeline."""
+    """Run the drug ingestion pipeline with maximum data collection."""
     pipeline = DrugIngestionPipeline()
-    await pipeline.run(max_per_category=20)
+    # Increased to 100 drugs per category for comprehensive coverage
+    await pipeline.run(max_per_category=100)
 
 
 if __name__ == "__main__":
