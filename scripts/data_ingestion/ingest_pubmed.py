@@ -216,40 +216,197 @@ class PubMedIngestionPipeline:
     Pipeline for ingesting PubMed articles into UMI knowledge base.
     """
     
-    # Medical topics to index
+    # Comprehensive medical topics to index - expanded for maximum coverage
     MEDICAL_TOPICS = [
-        # Common conditions
+        # Common chronic conditions
         "diabetes mellitus treatment",
+        "diabetes type 1 management",
+        "diabetes type 2 guidelines",
+        "diabetic complications",
         "hypertension management",
+        "resistant hypertension",
         "asthma guidelines",
+        "severe asthma treatment",
         "COPD treatment",
+        "COPD exacerbation",
         "heart failure therapy",
+        "heart failure preserved ejection fraction",
+        "atrial fibrillation management",
+        "coronary artery disease",
+        "chronic kidney disease",
+        "end stage renal disease",
+        "liver cirrhosis management",
+        "hepatitis B treatment",
+        "hepatitis C treatment",
+        "HIV antiretroviral therapy",
+        "rheumatoid arthritis treatment",
+        "osteoarthritis management",
+        "osteoporosis treatment",
+        "inflammatory bowel disease",
+        "Crohn disease treatment",
+        "ulcerative colitis",
+        "multiple sclerosis treatment",
+        "Parkinson disease management",
+        "Alzheimer disease treatment",
+        "epilepsy management",
+        
+        # Mental health
         "depression treatment",
+        "treatment resistant depression",
         "anxiety disorders",
+        "generalized anxiety disorder",
+        "panic disorder treatment",
+        "bipolar disorder management",
+        "schizophrenia treatment",
+        "PTSD treatment",
+        "OCD treatment",
+        "ADHD management",
+        "eating disorders treatment",
+        "substance use disorder",
+        "alcohol use disorder",
+        "opioid use disorder treatment",
+        
+        # Pain management
         "chronic pain management",
+        "neuropathic pain treatment",
+        "fibromyalgia management",
+        "migraine treatment",
+        "cluster headache",
+        "low back pain guidelines",
         
         # Emergency medicine
         "acute myocardial infarction",
+        "STEMI treatment",
+        "NSTEMI management",
         "stroke treatment",
+        "ischemic stroke thrombolysis",
+        "hemorrhagic stroke",
         "sepsis management",
+        "septic shock treatment",
         "anaphylaxis treatment",
+        "status epilepticus",
+        "diabetic ketoacidosis",
+        "acute respiratory distress syndrome",
+        "pulmonary embolism treatment",
+        "acute pancreatitis",
+        "gastrointestinal bleeding",
+        "trauma resuscitation",
+        "burn management",
+        "poisoning treatment",
+        "overdose management",
+        
+        # Infectious diseases
+        "pneumonia treatment",
+        "community acquired pneumonia",
+        "hospital acquired pneumonia",
+        "urinary tract infection",
+        "skin soft tissue infection",
+        "meningitis treatment",
+        "endocarditis treatment",
+        "osteomyelitis management",
+        "tuberculosis treatment",
+        "malaria treatment",
+        "dengue fever management",
+        "COVID-19 treatment",
+        "influenza treatment",
+        "fungal infection treatment",
+        "parasitic infection",
+        
+        # Oncology
+        "breast cancer treatment",
+        "lung cancer treatment",
+        "colorectal cancer",
+        "prostate cancer management",
+        "leukemia treatment",
+        "lymphoma treatment",
+        "melanoma treatment",
+        "pancreatic cancer",
+        "ovarian cancer treatment",
+        "cervical cancer",
+        "cancer immunotherapy",
+        "chemotherapy side effects",
+        "palliative care cancer",
         
         # Pharmacology
         "drug interactions",
         "adverse drug reactions",
         "antibiotic resistance",
+        "antimicrobial stewardship",
         "opioid prescribing",
+        "polypharmacy elderly",
+        "drug dosing renal impairment",
+        "drug dosing hepatic impairment",
+        "pharmacogenomics",
+        "therapeutic drug monitoring",
         
         # Diagnostics
         "differential diagnosis",
         "clinical decision making",
         "diagnostic accuracy",
+        "point of care testing",
+        "laboratory test interpretation",
+        "imaging guidelines",
+        "ECG interpretation",
+        "chest X-ray interpretation",
         
-        # Primary care
+        # Primary care & prevention
         "preventive medicine",
         "vaccination guidelines",
+        "adult immunization",
+        "childhood vaccination",
         "cancer screening",
+        "cardiovascular risk assessment",
         "health promotion",
+        "lifestyle modification",
+        "smoking cessation",
+        "obesity management",
+        "metabolic syndrome",
+        
+        # Pediatrics
+        "pediatric fever management",
+        "pediatric asthma",
+        "pediatric diabetes",
+        "neonatal care",
+        "pediatric infectious disease",
+        "childhood obesity",
+        "developmental disorders",
+        "pediatric emergency",
+        
+        # Obstetrics & Gynecology
+        "pregnancy complications",
+        "gestational diabetes",
+        "preeclampsia management",
+        "postpartum hemorrhage",
+        "contraception guidelines",
+        "menopause management",
+        "polycystic ovary syndrome",
+        "endometriosis treatment",
+        
+        # Geriatrics
+        "geriatric assessment",
+        "falls prevention elderly",
+        "delirium management",
+        "dementia care",
+        "frailty syndrome",
+        "end of life care",
+        
+        # Surgery & procedures
+        "preoperative assessment",
+        "postoperative care",
+        "surgical site infection",
+        "venous thromboembolism prophylaxis",
+        "wound care management",
+        
+        # Specialty topics
+        "thyroid disorders",
+        "adrenal insufficiency",
+        "pituitary disorders",
+        "anemia management",
+        "coagulation disorders",
+        "autoimmune diseases",
+        "allergic rhinitis",
+        "sleep disorders",
+        "chronic fatigue syndrome",
     ]
     
     def __init__(
@@ -262,29 +419,45 @@ class PubMedIngestionPipeline:
         self.client = PubMedClient(api_key=api_key)
         self.articles: List[PubMedArticle] = []
     
-    async def fetch_topic(self, topic: str, max_results: int = 50) -> List[PubMedArticle]:
-        """Fetch articles for a specific topic."""
-        # Add filters for quality
-        query = f"({topic}) AND (review[pt] OR guideline[pt] OR meta-analysis[pt]) AND english[la]"
+    async def fetch_topic(self, topic: str, max_results: int = 200) -> List[PubMedArticle]:
+        """Fetch articles for a specific topic with multiple query strategies."""
+        all_articles = []
+        seen_pmids = set()
         
-        pmids = await self.client.search(query, max_results=max_results)
+        # Strategy 1: High-quality reviews, guidelines, meta-analyses (most recent)
+        query1 = f'({topic}) AND (systematic review[pt] OR guideline[pt] OR meta-analysis[pt] OR practice guideline[pt]) AND english[la] AND ("last 10 years"[dp])'
+        pmids1 = await self.client.search(query1, max_results=max_results // 2, sort="pub_date")
         
-        if not pmids:
+        # Strategy 2: Clinical trials and research articles
+        query2 = f'({topic}) AND (clinical trial[pt] OR randomized controlled trial[pt]) AND english[la] AND ("last 5 years"[dp])'
+        pmids2 = await self.client.search(query2, max_results=max_results // 3, sort="relevance")
+        
+        # Strategy 3: Recent high-impact articles (any type)
+        query3 = f'({topic}) AND english[la] AND ("last 2 years"[dp])'
+        pmids3 = await self.client.search(query3, max_results=max_results // 4, sort="relevance")
+        
+        # Combine and deduplicate PMIDs
+        all_pmids = []
+        for pmid in pmids1 + pmids2 + pmids3:
+            if pmid not in seen_pmids:
+                seen_pmids.add(pmid)
+                all_pmids.append(pmid)
+        
+        if not all_pmids:
             return []
         
         # Fetch in batches to respect rate limits
-        articles = []
-        batch_size = 20
+        batch_size = 50  # Increased batch size for efficiency
         
-        for i in range(0, len(pmids), batch_size):
-            batch = pmids[i:i + batch_size]
+        for i in range(0, len(all_pmids), batch_size):
+            batch = all_pmids[i:i + batch_size]
             batch_articles = await self.client.fetch_articles(batch)
-            articles.extend(batch_articles)
+            all_articles.extend(batch_articles)
             
-            # Rate limiting
-            await asyncio.sleep(0.5)
+            # Rate limiting (with API key: 10 req/sec, without: 3 req/sec)
+            await asyncio.sleep(0.2 if self.client.api_key else 0.4)
         
-        return articles
+        return all_articles
     
     async def run(self, max_per_topic: int = 50) -> None:
         """Run the full ingestion pipeline."""
@@ -390,9 +563,10 @@ class PubMedIngestionPipeline:
 
 
 async def main():
-    """Run the PubMed ingestion pipeline."""
+    """Run the PubMed ingestion pipeline with maximum data collection."""
     pipeline = PubMedIngestionPipeline()
-    await pipeline.run(max_per_topic=30)
+    # Increased to 200 articles per topic for comprehensive coverage
+    await pipeline.run(max_per_topic=200)
     
     # Optionally index to RAG
     # await pipeline.index_to_rag()
