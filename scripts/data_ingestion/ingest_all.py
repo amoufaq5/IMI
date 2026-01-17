@@ -161,106 +161,162 @@ async def run_all_pipelines(
     # 1. PubMed - Medical Literature
     if pubmed:
         print("\n" + "=" * 70)
-        print("1. PUBMED - Medical Literature")
+        print("1. PUBMED - Medical Literature (NO LIMIT)")
         print("=" * 70)
-        try:
-            pipeline = PubMedIngestionPipeline(
-                output_dir=f"{output_base}/pubmed"
-            )
-            await pipeline.run(max_per_topic=200)
-            results["pubmed"] = {
-                "status": "success",
-                "articles": len(pipeline.articles),
-            }
-        except Exception as e:
-            print(f"PubMed ingestion failed: {e}")
-            results["pubmed"] = {"status": "failed", "error": str(e)}
+        results["pubmed"] = await run_pipeline_safely(
+            "PubMed", PubMedIngestionPipeline, f"{output_base}/pubmed",
+            run_kwargs={"max_per_topic": None}  # No limit
+        )
     
     # 2. OpenFDA - Drug Information
     if drugs:
         print("\n" + "=" * 70)
-        print("2. OPENFDA - Drug Information")
+        print("2. OPENFDA - Drug Information (NO LIMIT)")
         print("=" * 70)
-        try:
-            pipeline = DrugIngestionPipeline(
-                output_dir=f"{output_base}/drugs"
-            )
-            await pipeline.run(max_per_category=100)
-            results["drugs"] = {
-                "status": "success",
-                "drugs": len(pipeline.drugs),
-            }
-        except Exception as e:
-            print(f"Drug ingestion failed: {e}")
-            results["drugs"] = {"status": "failed", "error": str(e)}
+        results["drugs"] = await run_pipeline_safely(
+            "OpenFDA", DrugIngestionPipeline, f"{output_base}/drugs",
+            run_kwargs={"max_per_category": None}  # No limit
+        )
     
     # 3. ClinicalTrials.gov - Clinical Trials
     if trials:
         print("\n" + "=" * 70)
-        print("3. CLINICALTRIALS.GOV - Clinical Trials")
+        print("3. CLINICALTRIALS.GOV - Clinical Trials (NO LIMIT)")
         print("=" * 70)
-        try:
-            pipeline = ClinicalTrialsIngestionPipeline(
-                output_dir=f"{output_base}/clinical_trials"
-            )
-            await pipeline.run(max_per_term=150)
-            results["trials"] = {
-                "status": "success",
-                "trials": len(pipeline.trials),
-            }
-        except Exception as e:
-            print(f"Clinical trials ingestion failed: {e}")
-            results["trials"] = {"status": "failed", "error": str(e)}
+        results["trials"] = await run_pipeline_safely(
+            "ClinicalTrials", ClinicalTrialsIngestionPipeline, f"{output_base}/clinical_trials",
+            run_kwargs={"max_per_term": None}  # No limit
+        )
     
     # 4. RxNorm - Drug Terminology
     if rxnorm:
         print("\n" + "=" * 70)
         print("4. RXNORM - Drug Terminology & Interactions")
         print("=" * 70)
-        try:
-            pipeline = RxNormIngestionPipeline(
-                output_dir=f"{output_base}/rxnorm"
-            )
-            await pipeline.run()
-            results["rxnorm"] = {
-                "status": "success",
-                "drugs": len(pipeline.drugs),
-            }
-        except Exception as e:
-            print(f"RxNorm ingestion failed: {e}")
-            results["rxnorm"] = {"status": "failed", "error": str(e)}
+        results["rxnorm"] = await run_pipeline_safely(
+            "RxNorm", RxNormIngestionPipeline, f"{output_base}/rxnorm"
+        )
     
     # 5. WHO/ICD-10 - Disease Classification
     if who:
         print("\n" + "=" * 70)
         print("5. WHO/ICD-10 - Disease Classification")
         print("=" * 70)
-        try:
-            pipeline = WHOIngestionPipeline(
-                output_dir=f"{output_base}/who"
-            )
-            await pipeline.run()
-            results["who"] = {
-                "status": "success",
-                "codes": len(pipeline.codes),
-            }
-        except Exception as e:
-            print(f"WHO/ICD ingestion failed: {e}")
-            results["who"] = {"status": "failed", "error": str(e)}
+        results["who"] = await run_pipeline_safely(
+            "WHO/ICD-10", WHOIngestionPipeline, f"{output_base}/who"
+        )
+    
+    # 6. Kaggle - Medical Datasets
+    if kaggle:
+        print("\n" + "=" * 70)
+        print("6. KAGGLE - Medical Datasets (80+ datasets)")
+        print("=" * 70)
+        results["kaggle"] = await run_pipeline_safely(
+            "Kaggle", KaggleIngestionPipeline, f"{output_base}/kaggle",
+            init_kwargs={"download_dir": "data/raw/kaggle", "api_key": kaggle_api_key},
+            run_kwargs={"max_datasets": None}  # No limit
+        )
+    
+    # 7. MedlinePlus - Consumer Health Information
+    if medlineplus:
+        print("\n" + "=" * 70)
+        print("7. MEDLINEPLUS - Consumer Health Information")
+        print("=" * 70)
+        results["medlineplus"] = await run_pipeline_safely(
+            "MedlinePlus", MedlinePlusIngestionPipeline, f"{output_base}/medlineplus"
+        )
+    
+    # 8. Open Targets - Drug-Target-Disease Associations
+    if opentargets:
+        print("\n" + "=" * 70)
+        print("8. OPEN TARGETS - Drug-Target-Disease Associations")
+        print("=" * 70)
+        results["opentargets"] = await run_pipeline_safely(
+            "OpenTargets", OpenTargetsIngestionPipeline, f"{output_base}/opentargets"
+        )
+    
+    # 9. UMLS - Unified Medical Language System
+    if umls:
+        print("\n" + "=" * 70)
+        print("9. UMLS - Unified Medical Terminology")
+        print("=" * 70)
+        results["umls"] = await run_pipeline_safely(
+            "UMLS", UMLSIngestionPipeline, f"{output_base}/umls",
+            init_kwargs={"api_key": umls_api_key}
+        )
+    
+    # 10. SNOMED CT - Clinical Terminology
+    if snomed:
+        print("\n" + "=" * 70)
+        print("10. SNOMED CT - Clinical Terminology")
+        print("=" * 70)
+        results["snomed"] = await run_pipeline_safely(
+            "SNOMED CT", SNOMEDIngestionPipeline, f"{output_base}/snomed"
+        )
+    
+    # 11. Orphanet - Rare Diseases
+    if orphanet:
+        print("\n" + "=" * 70)
+        print("11. ORPHANET - Rare Disease Information")
+        print("=" * 70)
+        results["orphanet"] = await run_pipeline_safely(
+            "Orphanet", OrphanetIngestionPipeline, f"{output_base}/orphanet"
+        )
+    
+    # 12. DisGeNET - Gene-Disease Associations
+    if disgenet:
+        print("\n" + "=" * 70)
+        print("12. DISGENET - Gene-Disease Associations")
+        print("=" * 70)
+        results["disgenet"] = await run_pipeline_safely(
+            "DisGeNET", DisGeNETIngestionPipeline, f"{output_base}/disgenet",
+            init_kwargs={"api_key": disgenet_api_key}
+        )
+    
+    # 13. ChEMBL - Bioactivity Data
+    if chembl:
+        print("\n" + "=" * 70)
+        print("13. CHEMBL - Bioactivity & Drug Data")
+        print("=" * 70)
+        results["chembl"] = await run_pipeline_safely(
+            "ChEMBL", ChEMBLIngestionPipeline, f"{output_base}/chembl"
+        )
+    
+    # 14. UniProt - Protein Data
+    if uniprot:
+        print("\n" + "=" * 70)
+        print("14. UNIPROT - Protein & Gene Data")
+        print("=" * 70)
+        results["uniprot"] = await run_pipeline_safely(
+            "UniProt", UniProtIngestionPipeline, f"{output_base}/uniprot"
+        )
     
     # Summary
     print("\n" + "=" * 70)
     print("INGESTION SUMMARY")
     print("=" * 70)
     
+    success_count = 0
+    failed_count = 0
+    skipped_count = 0
+    total_items = 0
+    
     for source, result in results.items():
         status = result.get("status", "unknown")
         if status == "success":
-            count_key = [k for k in result.keys() if k != "status"][0]
-            print(f"  {source.upper()}: ✓ Success - {result[count_key]} items")
+            count = result.get("count", 0)
+            print(f"  {source.upper()}: ✓ Success - {count} items")
+            success_count += 1
+            total_items += count
+        elif status == "skipped":
+            print(f"  {source.upper()}: ⊘ Skipped - {result.get('reason', 'unknown')}")
+            skipped_count += 1
         else:
-            print(f"  {source.upper()}: ✗ Failed - {result.get('error', 'Unknown error')}")
+            print(f"  {source.upper()}: ✗ Failed - {result.get('error', 'Unknown error')[:50]}")
+            failed_count += 1
     
+    print(f"\nTotal: {success_count} succeeded, {failed_count} failed, {skipped_count} skipped")
+    print(f"Total items ingested: {total_items:,}")
     print(f"\nCompleted at: {datetime.now().isoformat()}")
     print("=" * 70)
     
@@ -270,54 +326,62 @@ async def run_all_pipelines(
 def main():
     """Main entry point with CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="UMI Master Data Ingestion Pipeline"
-    )
-    parser.add_argument(
-        "--pubmed", action="store_true", default=True,
-        help="Run PubMed ingestion"
-    )
-    parser.add_argument(
-        "--no-pubmed", action="store_false", dest="pubmed",
-        help="Skip PubMed ingestion"
-    )
-    parser.add_argument(
-        "--drugs", action="store_true", default=True,
-        help="Run OpenFDA drug ingestion"
-    )
-    parser.add_argument(
-        "--no-drugs", action="store_false", dest="drugs",
-        help="Skip OpenFDA drug ingestion"
-    )
-    parser.add_argument(
-        "--trials", action="store_true", default=True,
-        help="Run ClinicalTrials.gov ingestion"
-    )
-    parser.add_argument(
-        "--no-trials", action="store_false", dest="trials",
-        help="Skip ClinicalTrials.gov ingestion"
-    )
-    parser.add_argument(
-        "--rxnorm", action="store_true", default=True,
-        help="Run RxNorm ingestion"
-    )
-    parser.add_argument(
-        "--no-rxnorm", action="store_false", dest="rxnorm",
-        help="Skip RxNorm ingestion"
-    )
-    parser.add_argument(
-        "--who", action="store_true", default=True,
-        help="Run WHO/ICD-10 ingestion"
-    )
-    parser.add_argument(
-        "--no-who", action="store_false", dest="who",
-        help="Skip WHO/ICD-10 ingestion"
-    )
-    parser.add_argument(
-        "--output", type=str, default="data/knowledge_base",
-        help="Base output directory"
+        description="UMI Master Data Ingestion Pipeline - NO LIMITS"
     )
     
+    # Data source toggles
+    parser.add_argument("--no-pubmed", action="store_false", dest="pubmed", help="Skip PubMed")
+    parser.add_argument("--no-drugs", action="store_false", dest="drugs", help="Skip OpenFDA")
+    parser.add_argument("--no-trials", action="store_false", dest="trials", help="Skip ClinicalTrials")
+    parser.add_argument("--no-rxnorm", action="store_false", dest="rxnorm", help="Skip RxNorm")
+    parser.add_argument("--no-who", action="store_false", dest="who", help="Skip WHO/ICD-10")
+    parser.add_argument("--no-kaggle", action="store_false", dest="kaggle", help="Skip Kaggle")
+    parser.add_argument("--no-medlineplus", action="store_false", dest="medlineplus", help="Skip MedlinePlus")
+    parser.add_argument("--no-opentargets", action="store_false", dest="opentargets", help="Skip OpenTargets")
+    parser.add_argument("--no-umls", action="store_false", dest="umls", help="Skip UMLS")
+    parser.add_argument("--no-snomed", action="store_false", dest="snomed", help="Skip SNOMED CT")
+    parser.add_argument("--no-orphanet", action="store_false", dest="orphanet", help="Skip Orphanet")
+    parser.add_argument("--no-disgenet", action="store_false", dest="disgenet", help="Skip DisGeNET")
+    parser.add_argument("--no-chembl", action="store_false", dest="chembl", help="Skip ChEMBL")
+    parser.add_argument("--no-uniprot", action="store_false", dest="uniprot", help="Skip UniProt")
+    
+    # Set defaults to True
+    parser.set_defaults(
+        pubmed=True, drugs=True, trials=True, rxnorm=True, who=True,
+        kaggle=True, medlineplus=True, opentargets=True, umls=True,
+        snomed=True, orphanet=True, disgenet=True, chembl=True, uniprot=True
+    )
+    
+    # API keys
+    parser.add_argument("--kaggle-key", type=str, default=os.environ.get("KAGGLE_KEY"), help="Kaggle API key")
+    parser.add_argument("--umls-key", type=str, default=os.environ.get("UMLS_API_KEY"), help="UMLS API key")
+    parser.add_argument("--disgenet-key", type=str, default=os.environ.get("DISGENET_API_KEY"), help="DisGeNET API key")
+    
+    # Output
+    parser.add_argument("--output", type=str, default="data/knowledge_base", help="Base output directory")
+    
+    # Run only specific sources
+    parser.add_argument("--only", type=str, nargs="+", help="Run only specified sources")
+    
     args = parser.parse_args()
+    
+    # Handle --only flag
+    if args.only:
+        sources = [s.lower() for s in args.only]
+        args.pubmed = "pubmed" in sources
+        args.drugs = "drugs" in sources or "openfda" in sources
+        args.trials = "trials" in sources or "clinicaltrials" in sources
+        args.rxnorm = "rxnorm" in sources
+        args.who = "who" in sources or "icd" in sources
+        args.kaggle = "kaggle" in sources
+        args.medlineplus = "medlineplus" in sources
+        args.opentargets = "opentargets" in sources
+        args.umls = "umls" in sources
+        args.snomed = "snomed" in sources
+        args.orphanet = "orphanet" in sources
+        args.disgenet = "disgenet" in sources
+        args.chembl = "chembl" in sources
+        args.uniprot = "uniprot" in sources
     
     asyncio.run(run_all_pipelines(
         pubmed=args.pubmed,
@@ -325,7 +389,19 @@ def main():
         trials=args.trials,
         rxnorm=args.rxnorm,
         who=args.who,
+        kaggle=args.kaggle,
+        medlineplus=args.medlineplus,
+        opentargets=args.opentargets,
+        umls=args.umls,
+        snomed=args.snomed,
+        orphanet=args.orphanet,
+        disgenet=args.disgenet,
+        chembl=args.chembl,
+        uniprot=args.uniprot,
         output_base=args.output,
+        kaggle_api_key=args.kaggle_key,
+        umls_api_key=args.umls_key,
+        disgenet_api_key=args.disgenet_key,
     ))
 
 
