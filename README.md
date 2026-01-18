@@ -1,35 +1,33 @@
-# UMI - Universal Medical Intelligence
+# IMI - Intelligent Medical Intelligence
 
-[![License](https://img.shields.io/badge/license-Proprietary-red.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)]()
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.2+-red.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
-> **The first AI platform connecting every stakeholder in healthcare - from patient symptoms to pharmaceutical compliance.**
+> **Fine-tuned Medical LLM with Reinforcement Learning for Enhanced Reasoning**
 
 ## 🎯 Overview
 
-UMI is a comprehensive medical AI platform serving:
-- **Patients**: Symptom analysis, OTC recommendations, doctor referrals
-- **Pharmaceutical Companies**: QA/QC documentation, compliance tracking
-- **Hospitals**: ER triage, patient profiling, insurance management
-- **Researchers**: Literature review, paper assistance
-- **Students**: USMLE prep, medical education
+IMI is a medical AI training pipeline that fine-tunes large language models on medical data with reinforcement learning for improved reasoning. The trained model powers three specialized applications:
+
+- **💊 Pharma App**: Drug discovery, clinical trials, regulatory affairs
+- **📚 Student App**: Medical education, USMLE prep, clinical reasoning
+- **🏥 General App**: Health information for general users
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         UMI Platform                             │
+│                      IMI Training Pipeline                       │
 ├─────────────────────────────────────────────────────────────────┤
-│  Frontend (React/Next.js)  │  Mobile (React Native)            │
+│  Data Ingestion    │  Data Processing   │  Training             │
+│  - PubMed          │  - QA Generation   │  - SFT (Supervised)   │
+│  - HuggingFace     │  - Deduplication   │  - DPO (Preference)   │
+│  - Medical QA      │  - Format Convert  │  - ORPO (Combined)    │
 ├─────────────────────────────────────────────────────────────────┤
-│                      API Gateway (FastAPI)                       │
+│                      Fine-tuned Medical LLM                      │
 ├─────────────────────────────────────────────────────────────────┤
-│  Auth  │  Consultation  │  Pharma  │  Research  │  Imaging     │
-├─────────────────────────────────────────────────────────────────┤
-│                    AI/ML Layer (MoE + RAG)                       │
-├─────────────────────────────────────────────────────────────────┤
-│  PostgreSQL  │  Redis  │  Qdrant  │  MinIO  │  Kafka           │
+│  Pharma App        │  Student App       │  General Health App   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -37,150 +35,207 @@ UMI is a comprehensive medical AI platform serving:
 
 ### Prerequisites
 - Python 3.11+
-- Docker & Docker Compose
-- Node.js 20+ (for frontend)
-- CUDA 12.0+ (for GPU inference)
+- CUDA 11.8+ (for GPU training)
+- 24GB+ VRAM (for QLoRA) or 80GB+ (for full fine-tune)
 
-### Development Setup
+### Installation
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/umi.git
-cd umi
+git clone https://github.com/your-org/imi.git
+cd imi
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-.\venv\Scripts\activate   # Windows
+python -m venv .venv
+source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
-
-# Start infrastructure (Docker)
-docker-compose up -d
-
-# Run database migrations
-alembic upgrade head
-
-# Start development server
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+# Install flash-attention (optional, for long sequences)
+pip install flash-attn --no-build-isolation
 ```
 
-### Running Tests
+### Full Training Pipeline
 
 ```bash
-# Run all tests
-pytest
+# Run complete pipeline: Ingest → Process → SFT → DPO
+python scripts/training/run_training.py --all
 
-# Run with coverage
-pytest --cov=src --cov-report=html
+# Or run individual stages:
+python scripts/training/run_training.py --ingest    # Data ingestion
+python scripts/training/run_training.py --process   # Data processing
+python scripts/training/run_training.py --sft       # Supervised fine-tuning
+python scripts/training/run_training.py --dpo       # Preference optimization
 
-# Run specific test module
-pytest tests/test_consultation.py -v
+# Alternative: ORPO (combined SFT + preference, more efficient)
+python scripts/training/run_training.py --orpo
+```
+
+### Launch Applications
+
+```bash
+# Pharma App (port 7860)
+python apps/pharma/app.py --model outputs/imi-medical/sft
+
+# Student App (port 7861)
+python apps/student/app.py --model outputs/imi-medical/sft
+
+# General Health App (port 7862)
+python apps/general/app.py --model outputs/imi-medical/sft
 ```
 
 ## 📁 Project Structure
 
 ```
-umi/
-├── docs/                    # Documentation
-│   ├── 01_STRATEGIC_ANALYSIS.md
-│   ├── 02_UNIFIED_PITCH.md
-│   ├── 03_NEW_HORIZONS.md
-│   ├── 04_TECHNICAL_ARCHITECTURE.md
-│   └── 05_ROADMAP.md
-├── src/                     # Source code
-│   ├── api/                 # API routes
-│   ├── core/                # Core configuration
-│   ├── models/              # Database models
-│   ├── schemas/             # Pydantic schemas
-│   ├── services/            # Business logic
-│   ├── ai/                  # AI/ML components
-│   └── main.py              # Application entry
-├── tests/                   # Test suite
-├── frontend/                # React frontend
-├── mobile/                  # React Native app
-├── infrastructure/          # Docker, K8s configs
-├── scripts/                 # Utility scripts
-├── data/                    # Data pipelines
-└── ml/                      # ML training code
+imi/
+├── scripts/
+│   ├── data_ingestion/          # Data scrapers
+│   │   ├── base_scraper.py      # Base scraper class
+│   │   ├── scrape_pubmed.py     # PubMed literature
+│   │   ├── scrape_medical_datasets.py  # HuggingFace datasets
+│   │   └── scrape_all.py        # Master ingestion script
+│   │
+│   └── training/                # Training pipeline
+│       ├── data_processor.py    # Convert to training format
+│       ├── sft_trainer.py       # Supervised fine-tuning
+│       ├── dpo_trainer.py       # Direct Preference Optimization
+│       ├── orpo_trainer.py      # Odds Ratio Preference Optimization
+│       └── run_training.py      # Master training script
+│
+├── apps/                        # User applications
+│   ├── pharma/app.py           # Pharmaceutical research assistant
+│   ├── student/app.py          # Medical education assistant
+│   └── general/app.py          # General health assistant
+│
+├── data/
+│   ├── raw/                    # Scraped data
+│   └── processed/              # Training-ready data
+│
+├── outputs/                    # Trained models
+│
+└── requirements.txt            # Dependencies
 ```
 
-## 🔧 Configuration
+## 🔧 Training Configuration
 
-Key environment variables:
+### SFT (Supervised Fine-Tuning)
 
-```env
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/umi
-REDIS_URL=redis://localhost:6379
-
-# AI/ML
-OPENAI_API_KEY=sk-...  # For development
-HF_TOKEN=hf_...        # Hugging Face
-QDRANT_URL=http://localhost:6333
-
-# Security
-SECRET_KEY=your-secret-key
-JWT_ALGORITHM=HS256
-JWT_EXPIRY_MINUTES=30
-
-# External APIs
-PUBMED_API_KEY=...
-DRUGBANK_API_KEY=...
+```bash
+python scripts/training/sft_trainer.py \
+    --model mistralai/Mistral-7B-Instruct-v0.3 \
+    --mode qlora \
+    --max-seq-length 4096 \
+    --batch-size 2 \
+    --grad-accum 8 \
+    --lr 2e-4 \
+    --epochs 3 \
+    --lora-r 64
 ```
 
-## 📚 API Documentation
+### DPO (Direct Preference Optimization)
 
-Once running, access:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **OpenAPI JSON**: http://localhost:8000/openapi.json
+```bash
+python scripts/training/dpo_trainer.py \
+    --model outputs/imi-medical/sft \
+    --beta 0.1 \
+    --lr 5e-5 \
+    --epochs 1
+```
 
-## 🧪 Testing Strategy
+### ORPO (Combined SFT + Preference)
 
-- **Unit Tests**: Individual functions and classes
-- **Integration Tests**: API endpoints and database
-- **E2E Tests**: Full user workflows
-- **Load Tests**: Performance under stress
-- **Medical Accuracy Tests**: AI output validation
+```bash
+python scripts/training/orpo_trainer.py \
+    --model mistralai/Mistral-7B-Instruct-v0.3 \
+    --beta 0.1 \
+    --lr 8e-6 \
+    --epochs 3
+```
 
-## 🔐 Security
+## 📊 Training Modes
 
-- OAuth 2.0 / OpenID Connect authentication
-- Role-Based Access Control (RBAC)
-- Field-level encryption for PII
-- GDPR and UAE PDPL compliance
-- Regular security audits
+| Mode | VRAM Required | Speed | Quality |
+|------|---------------|-------|---------|
+| QLoRA (4-bit) | 24GB | Fast | Good |
+| LoRA (16-bit) | 48GB | Medium | Better |
+| Full Fine-tune | 80GB+ | Slow | Best |
 
-## 📊 Monitoring
+## 🧪 Data Sources
 
-- **Metrics**: Prometheus + Grafana
-- **Logging**: ELK Stack
-- **Tracing**: Jaeger
-- **Alerts**: PagerDuty integration
+### Scraped Data
+- **PubMed**: Medical literature and research articles
+- **HuggingFace Datasets**:
+  - PubMedQA: Research question answering
+  - MedQA: USMLE-style questions
+  - MedMCQA: Medical entrance exam questions
+  - Medical Meadow: Curated medical QA
+  - ChatDoctor: Doctor-patient conversations
 
-## 🤝 Contributing
+### Training Formats
+- **SFT**: Chat format with system prompts
+- **DPO/ORPO**: Preference pairs (chosen/rejected responses)
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+## 🔬 Reinforcement Learning
+
+IMI supports multiple RL approaches:
+
+1. **DPO (Direct Preference Optimization)**
+   - No reward model needed
+   - Stable training
+   - Good for preference alignment
+
+2. **ORPO (Odds Ratio Preference Optimization)**
+   - Combines SFT and preference learning
+   - Single training stage
+   - More memory efficient
+
+3. **PPO (Proximal Policy Optimization)** *(coming soon)*
+   - Classic RLHF approach
+   - Requires reward model
+   - Most flexible
+
+## 📈 Experiment Tracking
+
+```bash
+# Enable Weights & Biases logging
+python scripts/training/run_training.py --all --wandb
+
+# View training metrics
+wandb login
+# Then check your W&B dashboard
+```
+
+## 🚀 Deployment
+
+### Local Inference
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+
+# Load model
+tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3")
+model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3")
+model = PeftModel.from_pretrained(model, "outputs/imi-medical/sft")
+
+# Generate
+messages = [{"role": "user", "content": "What are the symptoms of diabetes?"}]
+prompt = tokenizer.apply_chat_template(messages, tokenize=False)
+outputs = model.generate(tokenizer(prompt, return_tensors="pt").input_ids)
+print(tokenizer.decode(outputs[0]))
+```
+
+### vLLM Serving (Production)
+```bash
+python -m vllm.entrypoints.openai.api_server \
+    --model outputs/imi-medical/sft \
+    --port 8000
+```
 
 ## 📄 License
 
-Proprietary - All rights reserved. See [LICENSE](LICENSE) for details.
-
-## 📞 Contact
-
-- **Email**: team@umi-health.com
-- **Website**: https://umi-health.com
+MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-**Built with ❤️ for better healthcare**
+**Built for better medical AI 🏥**
