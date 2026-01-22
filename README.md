@@ -197,6 +197,28 @@ See `.env.example` for required configuration.
 - Research adapter
 - Education adapter
 
+## Training Your Own Adapters
+
+See `docs/TRAINING_GUIDE.md` for complete instructions.
+
+```bash
+# Quick start
+python scripts/data_collection/collect_datasets.py      # Download open datasets
+python scripts/data_collection/synthetic_generator.py   # Generate synthetic data
+python scripts/data_collection/ingest_pdfs.py           # Ingest WHO/FDA PDFs
+python scripts/training/prepare_data.py                 # Prepare for training
+python scripts/training/train_lora.py --adapter all     # Train adapters
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| `docs/ARCHITECTURE.md` | Complete system architecture |
+| `docs/TRAINING_GUIDE.md` | Training pipeline guide |
+| `docs/API_REFERENCE.md` | API endpoint documentation |
+| `docs/DEPLOYMENT.md` | Deployment instructions |
+
 ## License
 
 Proprietary - All rights reserved.
