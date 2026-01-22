@@ -1,241 +1,202 @@
-# IMI - Intelligent Medical Intelligence
+# IMI - Intelligent Medical Interface
 
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.2+-red.svg)]()
-[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
+A production-grade medical LLM platform with hybrid cognition architecture serving patients, students, doctors, researchers, and pharmaceutical companies.
 
-> **Fine-tuned Medical LLM with Reinforcement Learning for Enhanced Reasoning**
+## Architecture Overview
 
-## 🎯 Overview
+### 5-Layer Hybrid Cognition Stack
 
-IMI is a medical AI training pipeline that fine-tunes large language models on medical data with reinforcement learning for improved reasoning. The trained model powers three specialized applications:
+1. **Layer 1 - Knowledge Graph (Truth Layer)**
+   - Disease ↔ Symptom ↔ Drug ↔ Interaction ↔ Guideline relationships
+   - Neo4j graph database for medical knowledge
+   - Sources: Clinical guidelines, drug labels, regulatory texts
 
-- **💊 Pharma App**: Drug discovery, clinical trials, regulatory affairs
-- **📚 Student App**: Medical education, USMLE prep, clinical reasoning
-- **🏥 General App**: Health information for general users
+2. **Layer 2 - Rule Engine (Safety Layer)**
+   - Deterministic logic for OTC eligibility, red-flag symptoms, contraindications
+   - ASMETHOD-style triage logic
+   - If-then medical reasoning
 
-## 🏗️ Architecture
+3. **Layer 3 - LLM (Language + Synthesis)**
+   - Meditron-based medical language model
+   - Fine-tuned for explanation, summarization, conversation, document drafting
+   - Never decides alone - always verified
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      IMI Training Pipeline                       │
-├─────────────────────────────────────────────────────────────────┤
-│  Data Ingestion    │  Data Processing   │  Training             │
-│  - PubMed          │  - QA Generation   │  - SFT (Supervised)   │
-│  - HuggingFace     │  - Deduplication   │  - DPO (Preference)   │
-│  - Medical QA      │  - Format Convert  │  - ORPO (Combined)    │
-├─────────────────────────────────────────────────────────────────┤
-│                      Fine-tuned Medical LLM                      │
-├─────────────────────────────────────────────────────────────────┤
-│  Pharma App        │  Student App       │  General Health App   │
-└─────────────────────────────────────────────────────────────────┘
-```
+4. **Layer 4 - Verifier/Critic Model**
+   - Hallucination detection
+   - Guideline conflict checking
+   - Overconfidence detection
 
-## 🚀 Quick Start
+5. **Layer 5 - Memory & Profiling**
+   - Longitudinal patient/pharma profiles
+   - Time-aware medical history
+   - Outcome feedback loops
 
-### Prerequisites
-- Python 3.11+
-- CUDA 11.8+ (for GPU training)
-- 24GB+ VRAM (for QLoRA) or 80GB+ (for full fine-tune)
+## User Types
 
-### Installation
+- **General User**: Medical information queries
+- **Patient**: Diagnosis support, OTC recommendations, referrals
+- **Student**: USMLE prep, medical education
+- **Researcher**: Drug research, patent process support
+- **Pharmaceutical**: QA/QC, regulatory compliance, sales tracking
+- **Hospital**: ER optimization, patient profiling
+- **Doctor**: Diagnosis assistance, case research
 
-```bash
-# Clone repository
-git clone https://github.com/your-org/imi.git
-cd imi
+## HIPAA Compliance
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+- End-to-end encryption (AES-256)
+- Role-based access control (RBAC)
+- Complete audit logging
+- Data anonymization
+- Secure key management
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install flash-attention (optional, for long sequences)
-pip install flash-attn --no-build-isolation
-```
-
-### Full Training Pipeline
-
-```bash
-# Run complete pipeline: Ingest → Process → SFT → DPO
-python scripts/training/run_training.py --all
-
-# Or run individual stages:
-python scripts/training/run_training.py --ingest    # Data ingestion
-python scripts/training/run_training.py --process   # Data processing
-python scripts/training/run_training.py --sft       # Supervised fine-tuning
-python scripts/training/run_training.py --dpo       # Preference optimization
-
-# Alternative: ORPO (combined SFT + preference, more efficient)
-python scripts/training/run_training.py --orpo
-```
-
-### Launch Applications
-
-```bash
-# Pharma App (port 7860)
-python apps/pharma/app.py --model outputs/imi-medical/sft
-
-# Student App (port 7861)
-python apps/student/app.py --model outputs/imi-medical/sft
-
-# General Health App (port 7862)
-python apps/general/app.py --model outputs/imi-medical/sft
-```
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 imi/
-├── scripts/
-│   ├── data_ingestion/          # Data scrapers
-│   │   ├── base_scraper.py      # Base scraper class
-│   │   ├── scrape_pubmed.py     # PubMed literature
-│   │   ├── scrape_medical_datasets.py  # HuggingFace datasets
-│   │   └── scrape_all.py        # Master ingestion script
-│   │
-│   └── training/                # Training pipeline
-│       ├── data_processor.py    # Convert to training format
-│       ├── sft_trainer.py       # Supervised fine-tuning
-│       ├── dpo_trainer.py       # Direct Preference Optimization
-│       ├── orpo_trainer.py      # Odds Ratio Preference Optimization
-│       └── run_training.py      # Master training script
-│
-├── apps/                        # User applications
-│   ├── pharma/app.py           # Pharmaceutical research assistant
-│   ├── student/app.py          # Medical education assistant
-│   └── general/app.py          # General health assistant
-│
-├── data/
-│   ├── raw/                    # Scraped data
-│   └── processed/              # Training-ready data
-│
-├── outputs/                    # Trained models
-│
-└── requirements.txt            # Dependencies
+├── src/
+│   ├── core/                     # Core infrastructure
+│   │   ├── config/               # Configuration management (settings.py)
+│   │   ├── security/             # HIPAA compliance
+│   │   │   ├── encryption.py     # AES-256-GCM encryption
+│   │   │   ├── authentication.py # JWT authentication
+│   │   │   ├── authorization.py  # RBAC permissions
+│   │   │   ├── audit.py          # Audit logging
+│   │   │   └── hipaa.py          # PHI handling
+│   │   └── database/             # Database connections
+│   │       ├── postgres.py       # PostgreSQL async client
+│   │       ├── neo4j_client.py   # Neo4j graph client
+│   │       └── redis_client.py   # Redis cache client
+│   ├── layers/                   # 5-Layer Architecture
+│   │   ├── knowledge_graph/      # Layer 1: Truth Layer
+│   │   │   ├── schema.py         # Medical entity models
+│   │   │   ├── queries.py        # Cypher query builder
+│   │   │   └── service.py        # KG service interface
+│   │   ├── rule_engine/          # Layer 2: Safety Layer
+│   │   │   ├── triage.py         # ASMETHOD triage
+│   │   │   ├── otc_eligibility.py# OTC assessment
+│   │   │   ├── contraindication_checker.py
+│   │   │   ├── red_flags.py      # Critical symptom detection
+│   │   │   └── service.py        # Rule engine orchestrator
+│   │   ├── llm/                  # Layer 3: Language Layer
+│   │   │   ├── meditron.py       # Meditron model wrapper
+│   │   │   ├── prompts.py        # Role-specific prompts
+│   │   │   ├── adapters.py       # LoRA domain adapters
+│   │   │   └── service.py        # LLM service
+│   │   ├── verifier/             # Layer 4: Critic Layer
+│   │   │   ├── hallucination_detector.py
+│   │   │   ├── guideline_checker.py
+│   │   │   ├── confidence_calibrator.py
+│   │   │   └── service.py        # Verifier orchestrator
+│   │   └── memory/               # Layer 5: Profiling Layer
+│   │       ├── patient_profile.py# HIPAA-compliant profiles
+│   │       ├── entity_profile.py # Pharma/hospital profiles
+│   │       ├── conversation_memory.py
+│   │       └── service.py        # Memory service
+│   ├── domains/                  # Domain-specific services
+│   │   ├── patient.py            # Patient triage, diagnosis
+│   │   ├── student.py            # USMLE, education
+│   │   ├── doctor.py             # Clinical decision support
+│   │   ├── researcher.py         # Research, patents
+│   │   ├── pharma.py             # QA/QC, regulatory
+│   │   ├── hospital.py           # ER, insurance
+│   │   └── general.py            # General medical info
+│   ├── api/                      # FastAPI REST API
+│   │   ├── main.py               # Application entry
+│   │   └── routes/               # API endpoints
+│   └── orchestrator.py           # Central coordinator
+├── scripts/                      # Training, data ingestion
+├── apps/                         # Standalone applications
+├── docs/                         # Documentation
+├── requirements.txt              # Python dependencies
+└── .env.example                  # Environment template
 ```
 
-## 🔧 Training Configuration
-
-### SFT (Supervised Fine-Tuning)
+## Quick Start
 
 ```bash
-python scripts/training/sft_trainer.py \
-    --model mistralai/Mistral-7B-Instruct-v0.3 \
-    --mode qlora \
-    --max-seq-length 4096 \
-    --batch-size 2 \
-    --grad-accum 8 \
-    --lr 2e-4 \
-    --epochs 3 \
-    --lora-r 64
+# Install dependencies
+pip install -r requirements.txt
+
+# Set environment variables
+cp .env.example .env
+
+# Run database migrations
+alembic upgrade head
+
+# Start the server
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
-### DPO (Direct Preference Optimization)
+## API Endpoints
 
-```bash
-python scripts/training/dpo_trainer.py \
-    --model outputs/imi-medical/sft \
-    --beta 0.1 \
-    --lr 5e-5 \
-    --epochs 1
-```
+### Patient API (`/api/v1/patient`)
+- `POST /assess-symptoms` - Symptom assessment and triage
+- `POST /health-info` - Health information queries
+- `POST /check-drug-safety` - Drug safety verification
+- `POST /analyze-lab-results` - Lab result interpretation
 
-### ORPO (Combined SFT + Preference)
+### Doctor API (`/api/v1/doctor`)
+- `POST /differential` - Generate differential diagnosis
+- `POST /treatment-recommendations` - Evidence-based treatments
+- `POST /drug-interactions` - Drug interaction checking
+- `GET /guidelines/{condition}` - Clinical guidelines
+- `POST /summarize-case` - Case summarization
 
-```bash
-python scripts/training/orpo_trainer.py \
-    --model mistralai/Mistral-7B-Instruct-v0.3 \
-    --beta 0.1 \
-    --lr 8e-6 \
-    --epochs 3
-```
+### Student API (`/api/v1/student`)
+- `POST /answer-question` - USMLE question answering
+- `POST /explain-concept` - Medical concept explanation
+- `POST /generate-practice` - Practice question generation
+- `POST /review-essay` - Medical writing review
 
-## 📊 Training Modes
+### Researcher API (`/api/v1/researcher`)
+- `POST /literature/search` - Literature search
+- `POST /literature/synthesize` - Literature synthesis
+- `POST /patent/guidance` - Patent application guidance
+- `POST /regulatory-pathway` - Regulatory pathway guidance
 
-| Mode | VRAM Required | Speed | Quality |
-|------|---------------|-------|---------|
-| QLoRA (4-bit) | 24GB | Fast | Good |
-| LoRA (16-bit) | 48GB | Medium | Better |
-| Full Fine-tune | 80GB+ | Slow | Best |
+### Pharmaceutical API (`/api/v1/pharma`)
+- `POST /document/generate` - QA document generation
+- `POST /compliance/check` - Regulatory compliance check
+- `POST /validation` - Validation record management
+- `GET /sales/analytics/{entity_id}` - Sales analytics
 
-## 🧪 Data Sources
+### Hospital API (`/api/v1/hospital`)
+- `POST /er/triage` - ER patient triage
+- `GET /er/queue` - ER queue management
+- `POST /appointment` - Appointment scheduling
+- `POST /insurance/claim` - Insurance claim processing
 
-### Scraped Data
-- **PubMed**: Medical literature and research articles
-- **HuggingFace Datasets**:
-  - PubMedQA: Research question answering
-  - MedQA: USMLE-style questions
-  - MedMCQA: Medical entrance exam questions
-  - Medical Meadow: Curated medical QA
-  - ChatDoctor: Doctor-patient conversations
+### General API (`/api/v1/general`)
+- `GET /disease/{name}` - Disease information
+- `GET /drug/{name}` - Drug information
+- `POST /search` - Medical search
+- `POST /drug-interaction` - Drug interaction check
 
-### Training Formats
-- **SFT**: Chat format with system prompts
-- **DPO/ORPO**: Preference pairs (chosen/rejected responses)
+## Environment Variables
 
-## 🔬 Reinforcement Learning
+See `.env.example` for required configuration.
 
-IMI supports multiple RL approaches:
+## Key Features
 
-1. **DPO (Direct Preference Optimization)**
-   - No reward model needed
-   - Stable training
-   - Good for preference alignment
+### Safety-First Architecture
+- **LLM never decides alone** on safety-critical matters
+- All recommendations pass through deterministic rule engine
+- Verifier checks for hallucinations and guideline conflicts
+- Red flag detection for emergency symptoms
 
-2. **ORPO (Odds Ratio Preference Optimization)**
-   - Combines SFT and preference learning
-   - Single training stage
-   - More memory efficient
+### HIPAA Compliance
+- AES-256-GCM encryption for PHI at rest
+- JWT-based authentication with role verification
+- Complete audit trail of all PHI access
+- Data anonymization for research use
 
-3. **PPO (Proximal Policy Optimization)** *(coming soon)*
-   - Classic RLHF approach
-   - Requires reward model
-   - Most flexible
+### Domain Adapters (LoRA)
+- Patient Triage adapter
+- Clinical Pharmacist adapter
+- Regulatory QA adapter
+- Research adapter
+- Education adapter
 
-## 📈 Experiment Tracking
+## License
 
-```bash
-# Enable Weights & Biases logging
-python scripts/training/run_training.py --all --wandb
-
-# View training metrics
-wandb login
-# Then check your W&B dashboard
-```
-
-## 🚀 Deployment
-
-### Local Inference
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
-
-# Load model
-tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3")
-model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.3")
-model = PeftModel.from_pretrained(model, "outputs/imi-medical/sft")
-
-# Generate
-messages = [{"role": "user", "content": "What are the symptoms of diabetes?"}]
-prompt = tokenizer.apply_chat_template(messages, tokenize=False)
-outputs = model.generate(tokenizer(prompt, return_tensors="pt").input_ids)
-print(tokenizer.decode(outputs[0]))
-```
-
-### vLLM Serving (Production)
-```bash
-python -m vllm.entrypoints.openai.api_server \
-    --model outputs/imi-medical/sft \
-    --port 8000
-```
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details.
-
----
-
-**Built for better medical AI 🏥**
+Proprietary - All rights reserved.

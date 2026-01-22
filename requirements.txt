@@ -1,96 +1,71 @@
-# IMI - Intelligent Medical Intelligence
-# Medical LLM Fine-tuning + Reinforcement Learning Pipeline
-# Optimized for multi-GPU training (H100/A100)
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 
-# ============================================================
-# CORE ML/DL - PyTorch & Transformers
-# ============================================================
-torch>=2.2.0
-transformers>=4.40.0
-accelerate>=0.28.0
-safetensors>=0.4.2
-einops>=0.7.0
+# Database & ORM
+sqlalchemy==2.0.25
+alembic==1.13.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+redis==5.0.1
+neo4j==5.16.0
 
-# ============================================================
-# FINE-TUNING (SFT + LoRA/QLoRA)
-# ============================================================
-peft>=0.10.0
-trl>=0.8.0                    # SFT, DPO, PPO, ORPO trainers
-bitsandbytes>=0.43.0          # 4-bit/8-bit quantization
+# LLM & ML
+torch==2.1.2
+transformers==4.36.2
+accelerate==0.25.0
+peft==0.7.1
+bitsandbytes==0.42.0
+datasets==2.16.1
+sentencepiece==0.1.99
+safetensors==0.4.1
+einops==0.7.0
 
-# ============================================================
-# DISTRIBUTED TRAINING
-# ============================================================
-deepspeed>=0.14.0
-ninja>=1.11.1                 # JIT compilation for custom CUDA
+# Medical NLP
+spacy==3.7.2
+scispacy==0.5.3
+medspacy==1.1.2
 
-# ============================================================
-# FLASH ATTENTION (long context)
-# ============================================================
-flash-attn>=2.5.0             # Install separately: pip install flash-attn --no-build-isolation
+# Image Processing (Medical Imaging)
+pillow==10.2.0
+pydicom==2.4.4
+nibabel==5.2.0
+opencv-python==4.9.0.80
 
-# ============================================================
-# DATASETS & TOKENIZATION
-# ============================================================
-datasets>=2.18.0
-tokenizers>=0.15.2
-sentencepiece>=0.2.0
+# Vector Database & Embeddings
+chromadb==0.4.22
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
 
-# ============================================================
-# REINFORCEMENT LEARNING (RLHF/DPO/PPO)
-# ============================================================
-# trl already includes DPO, PPO, ORPO trainers
-# Additional RL utilities:
-gymnasium>=0.29.0             # RL environments (optional)
+# Security & HIPAA Compliance
+cryptography==41.0.7
+python-dotenv==1.0.0
+argon2-cffi==23.1.0
 
-# ============================================================
-# DATA PROCESSING
-# ============================================================
-numpy>=1.26.0,<2.0            # Must be <2.0 for PyTorch compatibility
-pandas>=2.2.0
-scipy>=1.12.0
-scikit-learn>=1.4.0
-pyarrow>=15.0.0
+# Logging & Monitoring
+structlog==24.1.0
+prometheus-client==0.19.0
+opentelemetry-api==1.22.0
+opentelemetry-sdk==1.22.0
+opentelemetry-instrumentation-fastapi==0.43b0
 
-# ============================================================
-# DATA INGESTION (Scrapers)
-# ============================================================
-httpx>=0.27.0                 # Async HTTP client
-aiohttp>=3.9.0                # Async HTTP
-requests>=2.31.0              # Sync HTTP
-beautifulsoup4>=4.12.0        # HTML parsing
-lxml>=5.1.0                   # XML parsing
-kaggle>=1.6.0                 # Kaggle datasets API
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+httpx==0.26.0
 
-# ============================================================
-# EXPERIMENT TRACKING & LOGGING
-# ============================================================
-wandb>=0.16.0                 # Weights & Biases
-tensorboard>=2.16.0
-rich>=13.7.0                  # Beautiful terminal output
-tqdm>=4.66.0
-
-# ============================================================
-# EVALUATION & METRICS
-# ============================================================
-evaluate>=0.4.0               # HuggingFace evaluate
-rouge-score>=0.1.2
-nltk>=3.8.0
-bert-score>=0.3.13
-
-# ============================================================
-# INFERENCE & SERVING (for apps)
-# ============================================================
-vllm>=0.4.0                   # Fast LLM inference
-gradio>=4.20.0                # Quick UI for apps
-fastapi>=0.110.0              # API serving
-uvicorn>=0.29.0
-
-# ============================================================
-# UTILITIES
-# ============================================================
-python-dotenv>=1.0.0
-pyyaml>=6.0.1
-orjson>=3.9.0
-tenacity>=8.2.0               # Retry logic for API calls
-typer>=0.9.0                  # CLI framework
+# Utilities
+httpx==0.26.0
+aiofiles==23.2.1
+orjson==3.9.12
+tenacity==8.2.3
+pyyaml==6.0.1
+jinja2==3.1.3
+pandas==2.1.4
+numpy==1.26.3
