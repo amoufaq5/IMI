@@ -447,3 +447,146 @@ python scripts/training/evaluate_adapter.py --adapter patient_triage
 | Open datasets | `collect_datasets.py` | MedQA, PubMedQA, HealthCareMagic |
 | Synthetic cases | `synthetic_generator.py` | Triage, interactions, USMLE |
 | Your PDFs | `ingest_pdfs.py` | WHO/FDA regulatory Q&A |
+
+---
+
+## New Components (v2.0)
+
+### LangGraph Orchestrator
+**Location:** `src/orchestrator_langgraph.py`
+
+Replaces the linear orchestrator with a graph-based flow:
+
+```
+Query → Memory → RAG → Knowledge Graph → Safety Check
+                                              │
+                    ┌─────────────────────────┼─────────────────────────┐
+                    │                         │                         │
+               EMERGENCY                   BLOCKED                   ROUTINE
+                    │                         │                         │
+                    ▼                         ▼                         ▼
+              Emergency                   Blocked                  LLM Generate
+              Protocol                    Response                      │
+                    │                         │                         ▼
+                    │                         │                    Verify ──FAIL──► Retry (max 3)
+                    │                         │                         │
+                    └─────────────────────────┴────────PASS─────────────┘
+                                              │
+                                              ▼
+                                      Finalize + Citations
+```
+
+**Features:**
+- Conditional branching (emergency vs routine)
+- Retry loops on verification failure
+- State persistence with checkpointing
+- Full reasoning trace at every node
+
+---
+
+### RAG Pipeline
+**Location:** `src/layers/rag/`
+
+Retrieval Augmented Generation for medical knowledge:
+
+| File | Purpose |
+|------|---------|
+| `pipeline.py` | Document ingestion, chunking, retrieval |
+| `embeddings.py` | Embedding service (sentence-transformers, OpenAI) |
+| `vector_store.py` | Vector storage (ChromaDB, FAISS) |
+
+**Usage:**
+```python
+from src.layers.rag import get_rag_pipeline
+
+rag = get_rag_pipeline()
+
+# Ingest documents
+rag.ingest_directory("data/pdfs/")
+
+# Retrieve for query
+results = rag.retrieve("chest pain treatment guidelines")
+```
+
+---
+
+### SHAP Explainability
+**Location:** `src/layers/explainability/`
+
+Provides interpretable explanations for model outputs:
+
+| Feature | Description |
+|---------|-------------|
+| Token importance | Which words influenced the response |
+| Feature attribution | Impact of age, conditions, medications |
+| Counterfactuals | "If X were different, then Y" |
+| Visualization | HTML/text token highlighting |
+
+**Usage:**
+```python
+from src.layers.explainability import get_shap_explainer
+
+explainer = get_shap_explainer()
+explanation = await explainer.explain(query, response, context)
+
+print(explanation.get_summary())
+print(explanation.top_positive_factors)
+```
+
+---
+
+### Citation Tracking
+**Location:** `src/layers/citation/`
+
+Tracks and formats citations for all outputs:
+
+**Sources tracked:**
+- RAG documents
+- Knowledge Graph nodes
+- Rule Engine rules
+- Medical guidelines
+
+**Credibility levels:**
+| Level | Sources |
+|-------|---------|
+| Highest | FDA, WHO, CDC, NIH, AHA, Cochrane |
+| High | PubMed, NEJM, Lancet, JAMA |
+| Medium | Mayo Clinic, WebMD |
+
+**Output format:**
+```
+Based on your symptoms [1], combined with your history [2]...
+
+## References
+[1] AHA Chest Pain Guidelines 2024. American Heart Association.
+[2] Patient Profile. IMI Knowledge Graph.
+```
+
+---
+
+## Updated Project Structure
+
+```
+imi/
+├── src/
+│   ├── api/                    # FastAPI routes
+│   ├── core/                   # Config, database, security
+│   ├── domains/                # Domain services (patient, doctor, etc.)
+│   ├── layers/
+│   │   ├── knowledge_graph/    # Layer 1: Neo4j medical facts
+│   │   ├── rule_engine/        # Layer 2: Safety rules
+│   │   ├── llm/                # Layer 3: Meditron + LoRA
+│   │   ├── verifier/           # Layer 4: Hallucination detection
+│   │   ├── memory/             # Layer 5: Patient profiles
+│   │   ├── rag/                # NEW: RAG pipeline
+│   │   ├── explainability/     # NEW: SHAP explanations
+│   │   └── citation/           # NEW: Citation tracking
+│   ├── orchestrator.py         # Original linear orchestrator
+│   └── orchestrator_langgraph.py  # NEW: Graph-based orchestrator
+├── scripts/
+│   ├── data_collection/        # Dataset collection, PDF ingestion
+│   └── training/               # LoRA training pipeline
+├── adapters/                   # Trained LoRA adapters
+├── data/                       # Training data, vector store
+└── docs/                       # Documentation
+```

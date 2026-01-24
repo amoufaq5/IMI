@@ -41,47 +41,172 @@ class DatasetConfig:
 
 # Open datasets that don't require credentials
 DATASETS = [
+    # ==================== EDUCATION / USMLE ====================
     DatasetConfig(
         name="medqa",
         url="https://huggingface.co/datasets/bigbio/med_qa/resolve/main/data/US/train.jsonl",
-        description="USMLE-style medical questions",
+        description="USMLE-style medical questions (~10k)",
         format="jsonl",
         adapter_type="education",
     ),
     DatasetConfig(
         name="medmcqa",
         url="https://huggingface.co/datasets/medmcqa/resolve/main/data/train.json",
-        description="Medical MCQ dataset from Indian medical exams",
+        description="Medical MCQ dataset from Indian medical exams (~180k)",
         format="json",
         adapter_type="education",
     ),
     DatasetConfig(
-        name="pubmedqa",
-        url="https://huggingface.co/datasets/pubmed_qa/resolve/main/pqa_labeled/train.json",
-        description="PubMed question answering dataset",
+        name="medical_meadow_wikidoc",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_wikidoc/resolve/main/medical_meadow_wikidoc.json",
+        description="WikiDoc medical articles Q&A (~10k)",
         format="json",
-        adapter_type="research",
+        adapter_type="education",
     ),
+    DatasetConfig(
+        name="medical_meadow_wikidoc_patient",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_wikidoc_patient_information/resolve/main/medical_meadow_wikidoc_patient_information.json",
+        description="WikiDoc patient information Q&A (~5k)",
+        format="json",
+        adapter_type="education",
+    ),
+    DatasetConfig(
+        name="medical_meadow_flashcards",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_medical_flashcards/resolve/main/medical_meadow_medical_flashcards.json",
+        description="Medical flashcards for studying (~33k)",
+        format="json",
+        adapter_type="education",
+    ),
+    DatasetConfig(
+        name="medquad",
+        url="https://huggingface.co/datasets/keivalya/MedQuad-MedicalQnADataset/resolve/main/train.json",
+        description="Medical Q&A from NIH websites (~16k)",
+        format="json",
+        adapter_type="education",
+    ),
+    
+    # ==================== PATIENT TRIAGE / CONVERSATIONS ====================
     DatasetConfig(
         name="healthcaremagic",
         url="https://huggingface.co/datasets/wangrongsheng/HealthCareMagic-100k-en/resolve/main/HealthCareMagic-100k.json",
-        description="Doctor-patient conversation dataset",
+        description="Doctor-patient conversation dataset (~100k)",
         format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="medical_meadow_mediqa",
         url="https://huggingface.co/datasets/medalpaca/medical_meadow_mediqa/resolve/main/medical_meadow_mediqa.json",
-        description="Medical Q&A from consumer health questions",
+        description="Medical Q&A from consumer health questions (~2k)",
         format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="chatdoctor",
         url="https://huggingface.co/datasets/lavita/ChatDoctor-HealthCareMagic-100k/resolve/main/chatdoctor-healthcaremagic.json",
-        description="ChatDoctor training conversations",
+        description="ChatDoctor training conversations (~100k)",
         format="json",
         adapter_type="patient_triage",
+    ),
+    DatasetConfig(
+        name="icliniq",
+        url="https://huggingface.co/datasets/lavita/ChatDoctor-iCliniq/resolve/main/chatdoctor-icliniq.json",
+        description="iCliniq doctor-patient conversations (~10k)",
+        format="json",
+        adapter_type="patient_triage",
+    ),
+    DatasetConfig(
+        name="medical_meadow_health_advice",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_health_advice/resolve/main/medical_meadow_health_advice.json",
+        description="Health advice conversations (~8k)",
+        format="json",
+        adapter_type="patient_triage",
+    ),
+    DatasetConfig(
+        name="meddialog_en",
+        url="https://huggingface.co/datasets/UCSD-AI4H/Medical-Dialogue-System/resolve/main/english/train.json",
+        description="Medical dialogue system conversations (~200k+)",
+        format="json",
+        adapter_type="patient_triage",
+    ),
+    
+    # ==================== RESEARCH / LITERATURE ====================
+    DatasetConfig(
+        name="pubmedqa",
+        url="https://huggingface.co/datasets/pubmed_qa/resolve/main/pqa_labeled/train.json",
+        description="PubMed question answering dataset (~1k labeled)",
+        format="json",
+        adapter_type="research",
+    ),
+    DatasetConfig(
+        name="medical_meadow_pubmed_causal",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_pubmed_causal/resolve/main/medical_meadow_pubmed_causal.json",
+        description="PubMed causal language modeling (~2.5M)",
+        format="json",
+        adapter_type="research",
+    ),
+    DatasetConfig(
+        name="sciq",
+        url="https://huggingface.co/datasets/allenai/sciq/resolve/main/data/train.json",
+        description="Science questions including biology/medicine (~12k)",
+        format="json",
+        adapter_type="research",
+    ),
+    
+    # ==================== CLINICAL / DOCTOR ====================
+    DatasetConfig(
+        name="medical_meadow_cord19",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_cord19/resolve/main/medical_meadow_cord19.json",
+        description="COVID-19 research papers Q&A (~1k)",
+        format="json",
+        adapter_type="clinical_decision",
+    ),
+    DatasetConfig(
+        name="medal_ner",
+        url="https://huggingface.co/datasets/bigbio/medal/resolve/main/data/train.jsonl",
+        description="Medical entity recognition abbreviations (~14M)",
+        format="jsonl",
+        adapter_type="clinical_decision",
+    ),
+    
+    # ==================== PHARMACIST / DRUG INFO ====================
+    DatasetConfig(
+        name="drug_combo_extraction",
+        url="https://huggingface.co/datasets/allenai/drug-combo-extraction/resolve/main/data/train.jsonl",
+        description="Drug combination extraction from literature",
+        format="jsonl",
+        adapter_type="clinical_pharmacist",
+    ),
+    DatasetConfig(
+        name="medical_meadow_openassistant",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_medqa/resolve/main/medical_meadow_medqa.json",
+        description="Medical OpenAssistant conversations (~10k)",
+        format="json",
+        adapter_type="clinical_pharmacist",
+    ),
+    
+    # ==================== MENTAL HEALTH ====================
+    DatasetConfig(
+        name="mental_health_counseling",
+        url="https://huggingface.co/datasets/Amod/mental_health_counseling_conversations/resolve/main/data/train.json",
+        description="Mental health counseling conversations (~3k)",
+        format="json",
+        adapter_type="patient_triage",
+    ),
+    DatasetConfig(
+        name="counsel_chat",
+        url="https://huggingface.co/datasets/nbertagnolli/counsel-chat/resolve/main/data/train.json",
+        description="Counseling chat conversations (~2k)",
+        format="json",
+        adapter_type="patient_triage",
+    ),
+    
+    # ==================== MULTILINGUAL (English subset) ====================
+    DatasetConfig(
+        name="medical_meadow_mmmlu",
+        url="https://huggingface.co/datasets/medalpaca/medical_meadow_mmmlu/resolve/main/medical_meadow_mmmlu.json",
+        description="Multilingual medical MMLU (~3k)",
+        format="json",
+        adapter_type="education",
     ),
 ]
 

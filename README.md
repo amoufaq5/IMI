@@ -103,12 +103,31 @@ imi/
 │   ├── api/                      # FastAPI REST API
 │   │   ├── main.py               # Application entry
 │   │   └── routes/               # API endpoints
-│   └── orchestrator.py           # Central coordinator
-├── scripts/                      # Training, data ingestion
+│   ├── orchestrator.py           # Linear orchestrator
+│   └── orchestrator_langgraph.py # Graph-based orchestrator (NEW)
+├── scripts/
+│   ├── data_collection/          # Dataset collection, PDF ingestion
+│   └── training/                 # LoRA training pipeline
+├── adapters/                     # Trained LoRA adapters
+├── data/                         # Training data, vector store
 ├── apps/                         # Standalone applications
 ├── docs/                         # Documentation
 ├── requirements.txt              # Python dependencies
 └── .env.example                  # Environment template
+```
+
+### New in v2.0
+
+```
+src/layers/
+├── rag/                          # RAG Pipeline (NEW)
+│   ├── pipeline.py               # Document ingestion & retrieval
+│   ├── embeddings.py             # Embedding service
+│   └── vector_store.py           # ChromaDB/FAISS storage
+├── explainability/               # SHAP Explainability (NEW)
+│   └── shap_explainer.py         # Token importance, counterfactuals
+└── citation/                     # Citation Tracking (NEW)
+    └── tracker.py                # Inline citations, references
 ```
 
 ## Quick Start
@@ -218,6 +237,18 @@ python scripts/training/train_lora.py --adapter all     # Train adapters
 | `docs/TRAINING_GUIDE.md` | Training pipeline guide |
 | `docs/API_REFERENCE.md` | API endpoint documentation |
 | `docs/DEPLOYMENT.md` | Deployment instructions |
+| `docs/RUNPOD_DEPLOYMENT_GUIDE.md` | RunPod cloud training guide |
+| `docs/FEATURES_AND_ROADMAP.md` | Features list and roadmap |
+| `docs/PITCH_DECK.md` | Investor pitch deck |
+| `docs/REASONING_AND_GOVERNANCE.md` | Decision making and auditing |
+
+## v2.0 Features
+
+- **LangGraph Orchestrator**: Graph-based flow with branching, retry loops, checkpointing
+- **RAG Pipeline**: Document ingestion, semantic search, context retrieval
+- **SHAP Explainability**: Token importance, feature attribution, counterfactuals
+- **Citation Tracking**: Inline citations `[1]`, reference lists, credibility scoring
+- **22 Medical Datasets**: 3M+ training examples from open sources
 
 ## License
 
