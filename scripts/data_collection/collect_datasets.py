@@ -100,20 +100,9 @@ DATASETS = [
         format="json",
         adapter_type="patient_triage",
     ),
-    DatasetConfig(
-        name="chatdoctor",
-        url="https://huggingface.co/datasets/lavita/ChatDoctor-HealthCareMagic-100k/resolve/main/chatdoctor-healthcaremagic.json",
-        description="ChatDoctor training conversations (~100k)",
-        format="json",
-        adapter_type="patient_triage",
-    ),
-    DatasetConfig(
-        name="icliniq",
-        url="https://huggingface.co/datasets/lavita/ChatDoctor-iCliniq/resolve/main/chatdoctor-icliniq.json",
-        description="iCliniq doctor-patient conversations (~10k)",
-        format="json",
-        adapter_type="patient_triage",
-    ),
+    # NOTE: ChatDoctor and iCliniq datasets removed — they are derived from
+    # ChatGPT outputs and may violate OpenAI ToS if used for commercial
+    # fine-tuning. Use HealthCareMagic and MedDialog instead.
     DatasetConfig(
         name="medical_meadow_health_advice",
         url="https://huggingface.co/datasets/medalpaca/medical_meadow_health_advice/resolve/main/medical_meadow_health_advice.json",

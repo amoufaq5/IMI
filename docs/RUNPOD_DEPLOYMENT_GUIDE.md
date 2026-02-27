@@ -17,17 +17,17 @@ Complete guide for deploying and training IMI on RunPod GPU cloud.
 
 | Use Case | GPU | VRAM | Cost/hr | Pod Type |
 |----------|-----|------|---------|----------|
-| **Development** | RTX 3090 | 24GB | ~$0.30 | Community |
-| **Training (7B)** | RTX A5000 | 24GB | ~$0.40 | Secure |
-| **Training (fast)** | A100 40GB | 40GB | ~$1.50 | Secure |
-| **Training (70B)** | A100 80GB | 80GB | ~$2.00 | Secure |
+| **Development** | RTX A5000 | 24GB | ~$0.40 | Community |
+| **Training (single adapter)** | A100 80GB | 80GB | ~$3.00 | Secure |
+| **Training (parallel, recommended)** | 4×A100 80GB | 320GB | ~$12.00 | Secure |
+| **Training (parallel, fast)** | 6×A100 80GB | 480GB | ~$18.00 | Secure |
 
 ### Launch Steps
 
 1. Click **"Deploy"** → **"GPU Pods"**
 2. Select template: **"RunPod Pytorch 2.1"** or **"RunPod Transformers"**
-3. Choose GPU (A100 40GB recommended for training)
-4. Set volume size: **100GB** (for model + data)
+3. Choose GPU: **4×A100-80GB** recommended for parallel training
+4. Set volume size: **250GB** (for 70B model + data + adapters)
 5. Click **"Deploy"**
 
 ---
@@ -77,10 +77,9 @@ pip install bitsandbytes accelerate peft trl
 
 # Option 2: Pre-download to workspace (persists across restarts)
 cd /workspace
-huggingface-cli download epfl-llm/meditron-7b --local-dir ./models/meditron-7b
+huggingface-cli download epfl-llm/meditron-70b --local-dir ./models/meditron-70b
 
-# For 70B (requires 150GB+ storage)
-# huggingface-cli download epfl-llm/meditron-70b --local-dir ./models/meditron-70b
+# NOTE: 70B model requires ~150GB storage and multi-GPU setup (4×A100-80GB recommended)
 ```
 
 ---
@@ -126,22 +125,19 @@ scp -P <port> ~/Documents/FDA_*.pdf root@<pod-ip>:/workspace/imi/data/pdfs/
 cd /workspace/imi
 source venv/bin/activate
 
-# Train single adapter (4-6 hours on A100)
-python scripts/training/train_lora.py --adapter patient_triage
+# Train single adapter on a specific GPU
+python scripts/training/train_lora.py --adapter patient_triage --gpu 0
 
 # Train with local model path
 python scripts/training/train_lora.py \
     --adapter patient_triage \
-    --base-model /workspace/models/meditron-7b
+    --base-model /workspace/models/meditron-70b
 
-# Train all adapters
+# Train all adapters in PARALLEL across multiple GPUs (recommended)
+python scripts/training/train_lora.py --adapter all --parallel
+
+# Train all adapters sequentially (single GPU fallback)
 python scripts/training/train_lora.py --adapter all
-
-# Train with 8-bit (faster on A100)
-python scripts/training/train_lora.py \
-    --adapter all \
-    --use-8bit \
-    --batch-size 8
 ```
 
 ### Training in Background (Recommended)
@@ -149,8 +145,8 @@ python scripts/training/train_lora.py \
 # Use screen to keep training running after disconnect
 screen -S training
 
-# Run training
-python scripts/training/train_lora.py --adapter all
+# Run parallel training across all GPUs (recommended)
+python scripts/training/train_lora.py --adapter all --parallel
 
 # Detach: Ctrl+A, then D
 # Reattach: screen -r training
@@ -229,7 +225,7 @@ echo "=== Preparing Training Data ==="
 python scripts/training/prepare_data.py
 
 echo "=== Setup Complete ==="
-echo "To train: python scripts/training/train_lora.py --adapter patient_triage"
+echo "To train: python scripts/training/train_lora.py --adapter all --parallel"
 ```
 
 Run with:
@@ -245,11 +241,12 @@ chmod +x setup_runpod.sh
 | Task | GPU | Time | Cost |
 |------|-----|------|------|
 | Data collection | Any | 30 min | ~$0.20 |
-| Train 1 adapter (7B) | A100 40GB | 4-6 hrs | ~$8 |
-| Train all adapters (7B) | A100 40GB | 24-30 hrs | ~$45 |
-| Train 1 adapter (70B) | A100 80GB | 12-18 hrs | ~$36 |
+| Train 1 adapter (70B) | 1×A100 80GB | 5-9 hrs | ~$24 |
+| Train all adapters (sequential) | 1×A100 80GB | ~38 hrs | ~$115 |
+| Train all adapters (parallel) | 4×A100 80GB | **~9 hrs** | **~$108** |
+| Train all adapters (parallel) | 6×A100 80GB | **~9 hrs** | **~$162** |
 
-**Tip:** Use spot instances for 50-70% savings (but may be interrupted).
+**Tip:** Use spot instances for 50-70% savings (but may be interrupted). Parallel training on 4 GPUs gives the best cost/speed balance.
 
 ---
 
@@ -277,7 +274,7 @@ ps aux | grep python
 ```bash
 # Clear cache and retry
 rm -rf ~/.cache/huggingface/
-huggingface-cli download epfl-llm/meditron-7b --local-dir /workspace/models/meditron-7b
+huggingface-cli download epfl-llm/meditron-70b --local-dir /workspace/models/meditron-70b
 ```
 
 ### Storage Full
@@ -303,8 +300,11 @@ ssh root@<ip> -p <port>
 # Activate environment
 cd /workspace/imi && source venv/bin/activate
 
-# Train
-python scripts/training/train_lora.py --adapter patient_triage
+# Train (parallel across all GPUs)
+python scripts/training/train_lora.py --adapter all --parallel
+
+# Train single adapter on specific GPU
+python scripts/training/train_lora.py --adapter patient_triage --gpu 0
 
 # Run server
 python scripts/run_server.py --port 8000

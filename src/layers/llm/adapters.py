@@ -32,18 +32,21 @@ class AdapterConfig:
     """Configuration for LoRA adapters"""
     
     DEFAULT_LORA_CONFIG = {
-        "r": 16,
-        "lora_alpha": 32,
+        "r": 32,
+        "lora_alpha": 64,
         "lora_dropout": 0.05,
         "bias": "none",
         "task_type": TaskType.CAUSAL_LM,
-        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+        "target_modules": [
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
     }
     
     ADAPTER_CONFIGS: Dict[AdapterType, Dict[str, Any]] = {
         AdapterType.PATIENT_TRIAGE: {
-            "r": 16,
-            "lora_alpha": 32,
+            "r": 32,
+            "lora_alpha": 64,
             "description": "Optimized for patient symptom assessment and triage",
             "training_focus": ["symptom_analysis", "urgency_assessment", "referral_decision"],
         },
@@ -54,8 +57,8 @@ class AdapterConfig:
             "training_focus": ["drug_interactions", "dosing", "patient_counseling"],
         },
         AdapterType.REGULATORY_QA: {
-            "r": 16,
-            "lora_alpha": 32,
+            "r": 32,
+            "lora_alpha": 64,
             "description": "Optimized for pharmaceutical QA and regulatory compliance",
             "training_focus": ["gmp_compliance", "documentation", "regulatory_guidance"],
         },
@@ -66,14 +69,14 @@ class AdapterConfig:
             "training_focus": ["literature_synthesis", "study_design", "data_interpretation"],
         },
         AdapterType.EDUCATION: {
-            "r": 16,
-            "lora_alpha": 32,
+            "r": 32,
+            "lora_alpha": 64,
             "description": "Optimized for medical education and USMLE prep",
             "training_focus": ["concept_explanation", "question_answering", "clinical_correlation"],
         },
         AdapterType.GENERAL_MEDICAL: {
-            "r": 16,
-            "lora_alpha": 32,
+            "r": 32,
+            "lora_alpha": 64,
             "description": "General medical knowledge adapter",
             "training_focus": ["medical_qa", "disease_info", "treatment_overview"],
         },
@@ -105,8 +108,8 @@ class DomainAdapter:
         )
         
         return LoraConfig(
-            r=config.get("r", 16),
-            lora_alpha=config.get("lora_alpha", 32),
+            r=config.get("r", 32),
+            lora_alpha=config.get("lora_alpha", 64),
             lora_dropout=AdapterConfig.DEFAULT_LORA_CONFIG["lora_dropout"],
             bias=AdapterConfig.DEFAULT_LORA_CONFIG["bias"],
             task_type=AdapterConfig.DEFAULT_LORA_CONFIG["task_type"],
@@ -134,8 +137,8 @@ class DomainAdapter:
             "type": adapter_type.value,
             "description": config.get("description", ""),
             "training_focus": config.get("training_focus", []),
-            "lora_r": config.get("r", 16),
-            "lora_alpha": config.get("lora_alpha", 32),
+            "lora_r": config.get("r", 32),
+            "lora_alpha": config.get("lora_alpha", 64),
             "path": str(self.get_adapter_path(adapter_type)),
             "is_loaded": adapter_type in self.loaded_adapters,
         }

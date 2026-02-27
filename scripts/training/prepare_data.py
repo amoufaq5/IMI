@@ -75,6 +75,9 @@ def prepare_adapter_data(adapter_name: str) -> Dict[str, List[Dict]]:
                 logger.info(f"  PDF data: {len(examples)} examples")
     
     # 4. Train directory (merged data from collect_datasets.py)
+    # NOTE: Only load _train split to avoid data leakage — collect_datasets.py
+    # already does its own 90/10 split, so loading the full merged file could
+    # leak validation data into training.
     train_file = DATA_DIR / "train" / f"{adapter_name}_train.json"
     if train_file.exists():
         with open(train_file) as f:
@@ -86,11 +89,13 @@ def prepare_adapter_data(adapter_name: str) -> Dict[str, List[Dict]]:
         logger.warning(f"  No data found for {adapter_name}")
         return {"train": [], "val": []}
     
-    # Deduplicate by instruction hash
+    # Deduplicate by instruction+input content hash (stable across runs)
+    import hashlib
     seen = set()
     unique_examples = []
     for ex in all_examples:
-        key = hash(ex.get("instruction", "") + ex.get("input", ""))
+        content = (ex.get("instruction", "") + ex.get("input", "")).encode("utf-8")
+        key = hashlib.sha256(content).hexdigest()
         if key not in seen:
             seen.add(key)
             unique_examples.append(ex)

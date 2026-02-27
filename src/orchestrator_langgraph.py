@@ -12,6 +12,7 @@ import logging
 from typing import TypedDict, Annotated, Literal, Optional, List, Dict, Any
 from datetime import datetime
 import operator
+import asyncio
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -19,11 +20,14 @@ from langgraph.prebuilt import ToolNode
 
 from src.layers.knowledge_graph import KnowledgeGraphService
 from src.layers.rule_engine import RuleEngineService, get_rule_engine_service
+from src.layers.rule_engine.triage import PatientAssessment, TriageUrgency
 from src.layers.llm import LLMService
 from src.layers.llm.prompts import RoleType
+from src.layers.llm.adapters import AdapterType
 from src.layers.verifier import VerifierService
 from src.layers.memory import MemoryService, get_memory_service
 from src.layers.citation import CitationTracker, get_citation_tracker
+from src.layers.rag.pipeline import RAGPipeline, get_rag_pipeline
 from src.core.security.audit import AuditLogger, get_audit_logger
 
 logger = logging.getLogger(__name__)
@@ -96,7 +100,7 @@ class IMINodes:
         llm_service: Optional[LLMService] = None,
         verifier_service: Optional[VerifierService] = None,
         memory_service: Optional[MemoryService] = None,
-        rag_pipeline: Optional[Any] = None,  # Will be RAGPipeline
+        rag_pipeline: Optional[RAGPipeline] = None,
         audit_logger: Optional[AuditLogger] = None,
     ):
         self.kg = knowledge_graph
@@ -184,6 +188,8 @@ class IMINodes:
         rag_context = ""
         rag_sources = []
         
+        rag_results = []
+        
         if self.rag:
             # Query RAG pipeline
             results = self.rag.retrieve(
@@ -198,9 +204,7 @@ class IMINodes:
                     for r in results
                 ])
                 rag_sources = [r.get("metadata", {}).get("source", r.get("source", "Unknown")) for r in results]
-                rag_results = results  # Store full results for citation tracking
-        else:
-            rag_results = []
+                rag_results = results
         
         elapsed = (datetime.utcnow() - start).total_seconds()
         
@@ -222,7 +226,7 @@ class IMINodes:
     # -------------------------------------------------------------------------
     # Node: Knowledge Graph
     # -------------------------------------------------------------------------
-    def knowledge_graph_lookup(self, state: IMIState) -> IMIState:
+    async def knowledge_graph_lookup(self, state: IMIState) -> dict:
         """Layer 1: Query knowledge graph for medical facts"""
         logger.info("[KG] Querying knowledge graph")
         start = datetime.utcnow()
@@ -231,20 +235,50 @@ class IMINodes:
         knowledge_sources = []
         
         if self.kg:
-            # Extract entities and query KG
-            # In production, use NER to extract medical entities
-            query_lower = state["query"].lower()
-            
-            # Query for relevant conditions, drugs, symptoms
-            # This would be async in production
             facts = []
             
-            # Add facts to context
+            # Search for diseases mentioned in query
+            try:
+                disease_results = await self.kg.search_diseases(state["query"], limit=3)
+                for d in disease_results:
+                    name = d.get("name", "")
+                    desc = d.get("description", "")[:200]
+                    if name:
+                        facts.append(f"Disease: {name} — {desc}")
+                        knowledge_sources.append(f"KG:disease:{name}")
+            except Exception as e:
+                logger.warning(f"KG disease search failed: {e}")
+            
+            # Search for drugs if method available
+            if hasattr(self.kg, "search_drugs"):
+                try:
+                    drug_results = await self.kg.search_drugs(state["query"], limit=3)
+                    for d in drug_results:
+                        name = d.get("name", "")
+                        drug_class = d.get("drug_class", "")
+                        if name:
+                            facts.append(f"Drug: {name} ({drug_class})")
+                            knowledge_sources.append(f"KG:drug:{name}")
+                except Exception as e:
+                    logger.warning(f"KG drug search failed: {e}")
+            
+            # Check drug interactions for patient medications
+            patient_meds = state.get("patient_context", {}).get("medications", [])
+            if patient_meds and hasattr(self.kg, "get_drug_interactions"):
+                try:
+                    for med in patient_meds[:5]:
+                        interactions = await self.kg.get_drug_interactions(med)
+                        for ix in (interactions or []):
+                            desc = ix.get("description", "")[:200]
+                            facts.append(f"Drug Interaction ({med}): {desc}")
+                            knowledge_sources.append(f"KG:interaction:{med}")
+                except Exception as e:
+                    logger.warning(f"KG interaction check failed: {e}")
+            
             if facts:
                 knowledge_context = "Medical Knowledge:\n" + "\n".join(
                     f"- {fact}" for fact in facts
                 )
-                knowledge_sources = ["knowledge_graph"]
         
         elapsed = (datetime.utcnow() - start).total_seconds()
         
@@ -265,13 +299,13 @@ class IMINodes:
     # -------------------------------------------------------------------------
     # Node: Rule Engine (Safety Check)
     # -------------------------------------------------------------------------
-    def safety_check(self, state: IMIState) -> IMIState:
-        """Layer 2: Run deterministic safety rules"""
+    def safety_check(self, state: IMIState) -> dict:
+        """Layer 2: Run deterministic safety rules via RuleEngineService"""
         logger.info("[RULES] Running safety checks")
         start = datetime.utcnow()
         
-        query_lower = state["query"].lower()
         patient_context = state.get("patient_context", {})
+        query_lower = state["query"].lower()
         
         safety_result = {
             "rules_triggered": [],
@@ -280,43 +314,83 @@ class IMINodes:
             "block_reason": None,
             "is_emergency": False,
             "constraints": [],
+            "triage_urgency": None,
         }
         
-        # Emergency detection
-        emergency_keywords = [
-            "chest pain", "can't breathe", "severe bleeding",
-            "unconscious", "stroke", "heart attack", "suicide",
-            "overdose", "seizure", "anaphylaxis",
-        ]
+        try:
+            # Build PatientAssessment from available context
+            assessment = PatientAssessment(
+                age=patient_context.get("age", 30),
+                sex=patient_context.get("gender"),
+                chief_complaint=state["query"][:200],
+                symptoms=patient_context.get("symptoms", []),
+                medical_conditions=patient_context.get("conditions", []),
+                current_medications=patient_context.get("medications", []),
+                allergies=patient_context.get("allergies", []),
+                is_pregnant=patient_context.get("is_pregnant", False),
+                is_breastfeeding=patient_context.get("is_breastfeeding", False),
+            )
+            
+            # Run full safety assessment through real rule engine
+            full_assessment = self.rule_engine.assess_patient(assessment, state["user_id"])
+            triage = full_assessment.triage
+            
+            safety_result["triage_urgency"] = triage.urgency.value
+            safety_result["rules_triggered"] = list(triage.rules_triggered)
+            safety_result["is_emergency"] = (triage.urgency == TriageUrgency.EMERGENCY)
+            
+            # Collect red flags as warnings
+            if triage.red_flags_detected:
+                for rf in triage.red_flags_detected:
+                    safety_result["warnings"].append(f"Red flag: {rf}")
+                safety_result["constraints"].append(
+                    "MUST recommend immediate medical attention for detected red flags"
+                )
+            
+            # Add triage recommendations as constraints
+            for rec in triage.recommendations:
+                safety_result["constraints"].append(rec)
+            
+            # Block if not safe to proceed
+            if not full_assessment.is_safe_to_proceed:
+                safety_result["blocked"] = True
+                blocking = (
+                    full_assessment.blocking_issues
+                    if hasattr(full_assessment, "blocking_issues")
+                    else ["Safety check failed"]
+                )
+                safety_result["block_reason"] = "; ".join(blocking)
         
-        for keyword in emergency_keywords:
-            if keyword in query_lower:
-                safety_result["is_emergency"] = True
-                safety_result["rules_triggered"].append(f"EMERGENCY:{keyword}")
-                safety_result["constraints"].append("MUST recommend immediate care")
-                safety_result["constraints"].append("MUST NOT suggest home remedies")
-                safety_result["warnings"].append(f"Emergency keyword: {keyword}")
+        except Exception as e:
+            logger.error(f"Rule engine assessment failed, using fallback: {e}")
+            # Fallback: basic keyword emergency detection
+            emergency_keywords = [
+                "chest pain", "can't breathe", "severe bleeding",
+                "unconscious", "stroke", "heart attack", "suicide",
+                "overdose", "seizure", "anaphylaxis",
+            ]
+            for keyword in emergency_keywords:
+                if keyword in query_lower:
+                    safety_result["is_emergency"] = True
+                    safety_result["rules_triggered"].append(f"EMERGENCY_FALLBACK:{keyword}")
+                    safety_result["constraints"].append("MUST recommend immediate care")
+                    safety_result["warnings"].append(f"Emergency keyword detected: {keyword}")
         
-        # Drug interaction check
-        if patient_context.get("medications"):
-            medications = patient_context["medications"]
-            # Check for dangerous combinations
-            safety_result["rules_triggered"].append("medication_check")
-        
-        # Allergy check
+        # Always apply allergy constraints from patient context
         if patient_context.get("allergies"):
-            safety_result["rules_triggered"].append("allergy_check")
             safety_result["constraints"].append(
                 f"MUST NOT recommend: {', '.join(patient_context['allergies'])}"
             )
+            safety_result["rules_triggered"].append("allergy_check")
         
-        # Age-specific rules
-        if patient_context.get("age"):
-            age = patient_context["age"]
-            if age < 18:
-                safety_result["constraints"].append("Use pediatric dosing guidelines")
-            elif age > 65:
-                safety_result["constraints"].append("Consider geriatric precautions")
+        # Always apply age-specific constraints
+        age = patient_context.get("age")
+        if age and age < 18:
+            safety_result["constraints"].append("Use pediatric dosing guidelines")
+            safety_result["rules_triggered"].append("pediatric_check")
+        elif age and age > 65:
+            safety_result["constraints"].append("Consider geriatric precautions")
+            safety_result["rules_triggered"].append("geriatric_check")
         
         elapsed = (datetime.utcnow() - start).total_seconds()
         
@@ -324,7 +398,7 @@ class IMINodes:
             **state,
             "safety_result": safety_result,
             "rules_applied": safety_result["rules_triggered"],
-            "warnings": state.get("warnings", []) + safety_result["warnings"],
+            "warnings": safety_result["warnings"],
             "is_emergency": safety_result["is_emergency"],
             "is_blocked": safety_result["blocked"],
             "block_reason": safety_result.get("block_reason"),
@@ -332,10 +406,12 @@ class IMINodes:
             "reasoning_trace": {
                 **state.get("reasoning_trace", {}),
                 "rule_engine": {
+                    "triage_urgency": safety_result.get("triage_urgency"),
                     "rules_evaluated": len(safety_result["rules_triggered"]),
                     "rules_triggered": safety_result["rules_triggered"],
                     "constraints_applied": safety_result["constraints"],
                     "is_emergency": safety_result["is_emergency"],
+                    "is_blocked": safety_result["blocked"],
                 }
             }
         }
@@ -375,7 +451,7 @@ class IMINodes:
     # -------------------------------------------------------------------------
     # Node: LLM Generation
     # -------------------------------------------------------------------------
-    def llm_generate(self, state: IMIState) -> IMIState:
+    async def llm_generate(self, state: IMIState) -> dict:
         """Layer 3: Generate response with LLM"""
         logger.info("[LLM] Generating response")
         start = datetime.utcnow()
@@ -383,15 +459,12 @@ class IMINodes:
         # Build context from all sources
         context_parts = []
         
-        # Add RAG context
         if state.get("rag_context"):
             context_parts.append(f"Relevant Medical Literature:\n{state['rag_context']}")
         
-        # Add knowledge graph context
         if state.get("knowledge_context"):
             context_parts.append(state["knowledge_context"])
         
-        # Add patient context
         if state.get("patient_context"):
             pc = state["patient_context"]
             patient_info = []
@@ -406,7 +479,6 @@ class IMINodes:
             if patient_info:
                 context_parts.append(f"Patient Information:\n" + "\n".join(patient_info))
         
-        # Add safety constraints
         if state.get("safety_result", {}).get("constraints"):
             constraints = state["safety_result"]["constraints"]
             context_parts.append(
@@ -414,7 +486,6 @@ class IMINodes:
                 "\n".join(f"- {c}" for c in constraints)
             )
         
-        # Add verification feedback if retrying
         if state.get("verification_feedback"):
             context_parts.append(
                 f"PREVIOUS RESPONSE FAILED VERIFICATION:\n{state['verification_feedback']}\n"
@@ -425,29 +496,32 @@ class IMINodes:
         
         # Select adapter based on role
         adapter_map = {
-            "patient": "patient_triage",
-            "doctor": "clinical_decision",
-            "pharmacist": "clinical_pharmacist",
-            "student": "education",
-            "researcher": "research",
-            "pharma": "regulatory_qa",
+            "patient": AdapterType.PATIENT_TRIAGE,
+            "doctor": AdapterType.GENERAL_MEDICAL,
+            "pharmacist": AdapterType.CLINICAL_PHARMACIST,
+            "student": AdapterType.EDUCATION,
+            "researcher": AdapterType.RESEARCH,
+            "pharma_qa": AdapterType.REGULATORY_QA,
         }
-        adapter = adapter_map.get(state["user_role"], "patient_triage")
+        adapter = adapter_map.get(state["user_role"])
+        adapter_name = adapter.value if adapter else "base"
         
-        # Generate response
+        # Generate response via actual LLM service
         if self.llm:
             role = RoleType(state["user_role"]) if state["user_role"] in [r.value for r in RoleType] else RoleType.GENERAL
             
-            # In production, this would be async
-            response = f"[LLM Response for: {state['query'][:50]}...]"
-            
-            # Actual LLM call would be:
-            # response = await self.llm.generate(
-            #     query=state["query"],
-            #     role=role,
-            #     context={"full_context": full_context},
-            #     adapter=adapter,
-            # )
+            try:
+                response = await self.llm.generate(
+                    query=state["query"],
+                    role=role,
+                    knowledge_context=state.get("knowledge_context"),
+                    safety_context=state.get("safety_result"),
+                    patient_context=state.get("patient_context"),
+                    adapter=adapter,
+                )
+            except Exception as e:
+                logger.error(f"LLM generation failed: {e}")
+                response = self._fallback_response(state["query"])
         else:
             response = self._fallback_response(state["query"])
         
@@ -456,12 +530,12 @@ class IMINodes:
         return {
             **state,
             "llm_response": response,
-            "llm_adapter": adapter,
+            "llm_adapter": adapter_name,
             "node_timings": {**state.get("node_timings", {}), "llm_generate": elapsed},
             "reasoning_trace": {
                 **state.get("reasoning_trace", {}),
                 "llm": {
-                    "adapter_used": adapter,
+                    "adapter_used": adapter_name,
                     "context_sources": len(context_parts),
                     "retry_attempt": state.get("verification_attempts", 0),
                 }
@@ -477,7 +551,7 @@ class IMINodes:
     # -------------------------------------------------------------------------
     # Node: Verification
     # -------------------------------------------------------------------------
-    def verify_response(self, state: IMIState) -> IMIState:
+    async def verify_response(self, state: IMIState) -> dict:
         """Layer 4: Verify LLM response for safety and accuracy"""
         logger.info("[VERIFY] Checking response")
         start = datetime.utcnow()
@@ -487,21 +561,36 @@ class IMINodes:
         feedback = ""
         
         if self.verifier:
-            # Run verification checks
-            response = state.get("llm_response", "")
+            response_text = state.get("llm_response", "")
+            role = (
+                RoleType(state["user_role"])
+                if state["user_role"] in [r.value for r in RoleType]
+                else RoleType.GENERAL
+            )
             
-            # Check 1: Hallucination detection
-            # Check 2: Guideline compliance
-            # Check 3: Safety constraint compliance
-            # Check 4: Allergy/contraindication check
-            
-            # For now, simulate verification
-            # In production:
-            # result = await self.verifier.verify(response, context)
-            # verified = result.is_verified
-            # feedback = result.feedback
-            
-            verified = True  # Placeholder
+            try:
+                result = await self.verifier.verify(
+                    response=response_text,
+                    query=state["query"],
+                    context=state.get("safety_result"),
+                    role=role,
+                    source_documents=state.get("rag_sources", []),
+                    rules_applied=state.get("rules_applied", []),
+                )
+                verified = result.is_verified
+                
+                if not verified:
+                    issues = getattr(result, "blocking_issues", [])
+                    suggestions = getattr(result, "suggestions", [])
+                    feedback_parts = []
+                    if issues:
+                        feedback_parts.append("Issues: " + "; ".join(issues))
+                    if suggestions:
+                        feedback_parts.append("Suggestions: " + "; ".join(suggestions))
+                    feedback = " | ".join(feedback_parts)
+            except Exception as e:
+                logger.error(f"Verification failed: {e}")
+                verified = True  # Don't block on verifier failure
         
         elapsed = (datetime.utcnow() - start).total_seconds()
         
@@ -644,7 +733,7 @@ def build_imi_graph(
     llm_service: Optional[LLMService] = None,
     verifier_service: Optional[VerifierService] = None,
     memory_service: Optional[MemoryService] = None,
-    rag_pipeline: Optional[Any] = None,
+    rag_pipeline: Optional[RAGPipeline] = None,
     audit_logger: Optional[AuditLogger] = None,
 ) -> StateGraph:
     """Build the IMI LangGraph orchestrator"""
@@ -680,8 +769,11 @@ def build_imi_graph(
     
     # Add edges
     graph.add_edge("initialize", "memory_lookup")
+    # Fan-out: RAG and KG run in parallel after memory lookup
     graph.add_edge("memory_lookup", "rag_retrieval")
-    graph.add_edge("rag_retrieval", "knowledge_graph")
+    graph.add_edge("memory_lookup", "knowledge_graph")
+    # Fan-in: both converge before safety check
+    graph.add_edge("rag_retrieval", "safety_check")
     graph.add_edge("knowledge_graph", "safety_check")
     
     # Conditional routing after safety check
@@ -741,7 +833,7 @@ class LangGraphOrchestrator:
         llm_service: Optional[LLMService] = None,
         verifier_service: Optional[VerifierService] = None,
         memory_service: Optional[MemoryService] = None,
-        rag_pipeline: Optional[Any] = None,
+        rag_pipeline: Optional[RAGPipeline] = None,
         audit_logger: Optional[AuditLogger] = None,
         enable_checkpointing: bool = True,
     ):
@@ -793,6 +885,9 @@ class LangGraphOrchestrator:
             "verification_feedback": "",
             "rag_context": "",
             "rag_sources": [],
+            "rag_results": [],
+            "citations": [],
+            "cited_response": "",
             "is_emergency": False,
             "is_blocked": False,
             "block_reason": None,

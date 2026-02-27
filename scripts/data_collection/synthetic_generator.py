@@ -490,72 +490,239 @@ Provide differential diagnosis and recommended workup."""
         else:
             return "Outpatient management possible if stable; close follow-up recommended"
     
+    # Real medical content for USMLE option generation
+    USMLE_DIAGNOSIS_OPTIONS = {
+        "cardiovascular": {
+            "correct": ["Acute myocardial infarction", "Unstable angina", "Heart failure exacerbation",
+                        "Aortic dissection", "Pulmonary embolism", "Atrial fibrillation",
+                        "Pericarditis", "Hypertensive emergency", "Cardiac tamponade"],
+            "distractors": ["Costochondritis", "GERD", "Panic attack", "Pneumothorax",
+                           "Pneumonia", "Musculoskeletal strain", "Esophageal spasm",
+                           "Pleuritis", "Herpes zoster", "Peptic ulcer disease"],
+            "findings": ["elevated troponin", "ST-segment elevation on ECG", "S3 gallop",
+                        "jugular venous distension", "bilateral rales", "new murmur",
+                        "displaced PMI", "widened mediastinum on CXR", "pericardial friction rub"],
+        },
+        "respiratory": {
+            "correct": ["Community-acquired pneumonia", "Acute asthma exacerbation", "COPD exacerbation",
+                        "Pulmonary embolism", "Pneumothorax", "Pleural effusion",
+                        "Lung cancer", "Tuberculosis", "Acute bronchitis"],
+            "distractors": ["Heart failure", "Anxiety", "Anemia", "GERD",
+                           "Costochondritis", "Myocardial infarction", "Pericarditis",
+                           "Thyroid storm", "Metabolic acidosis", "Diaphragmatic hernia"],
+            "findings": ["decreased breath sounds", "crackles on auscultation", "wheezing",
+                        "dullness to percussion", "tracheal deviation", "accessory muscle use",
+                        "digital clubbing", "egophony", "tactile fremitus"],
+        },
+        "gastrointestinal": {
+            "correct": ["Acute appendicitis", "Cholecystitis", "Pancreatitis",
+                        "Small bowel obstruction", "Peptic ulcer disease", "Diverticulitis",
+                        "Inflammatory bowel disease", "Celiac disease", "Hepatitis"],
+            "distractors": ["Myocardial infarction", "Lower lobe pneumonia", "Diabetic ketoacidosis",
+                           "Pyelonephritis", "Ectopic pregnancy", "Ovarian torsion",
+                           "Mesenteric ischemia", "Abdominal aortic aneurysm", "Herpes zoster"],
+            "findings": ["rebound tenderness", "Murphy's sign positive", "guarding",
+                        "absent bowel sounds", "distended abdomen", "hepatomegaly",
+                        "Cullen's sign", "elevated lipase", "elevated bilirubin"],
+        },
+        "neurological": {
+            "correct": ["Ischemic stroke", "Migraine with aura", "Subarachnoid hemorrhage",
+                        "Meningitis", "Multiple sclerosis", "Seizure disorder",
+                        "Guillain-Barre syndrome", "Bell's palsy", "Parkinson's disease"],
+            "distractors": ["Hypoglycemia", "Hypertensive emergency", "Benign positional vertigo",
+                           "Labyrinthitis", "Cervical radiculopathy", "Conversion disorder",
+                           "Medication side effect", "Dehydration", "Anxiety disorder"],
+            "findings": ["focal neurological deficit", "papilledema", "nuchal rigidity",
+                        "positive Babinski sign", "intention tremor", "resting tremor",
+                        "decreased sensation", "hyperreflexia", "positive Romberg test"],
+        },
+    }
+
+    USMLE_MANAGEMENT_OPTIONS = {
+        "cardiovascular": [
+            "Start IV heparin and arrange cardiac catheterization",
+            "Administer aspirin 325mg and obtain serial troponins",
+            "Start IV nitroglycerin and monitor blood pressure",
+            "Initiate beta-blocker therapy and schedule stress test",
+            "Order urgent echocardiogram",
+            "Start ACE inhibitor and diuretic therapy",
+            "Emergent pericardiocentesis",
+            "CT angiography of the chest",
+        ],
+        "respiratory": [
+            "Administer albuterol nebulizer and systemic corticosteroids",
+            "Start empiric antibiotics and obtain sputum culture",
+            "Order CT pulmonary angiography",
+            "Emergent chest tube placement",
+            "Start supplemental oxygen and obtain ABG",
+            "Initiate non-invasive positive pressure ventilation",
+            "Obtain acid-fast bacilli sputum smear",
+            "Therapeutic thoracentesis",
+        ],
+        "gastrointestinal": [
+            "Surgical consultation for appendectomy",
+            "NPO status, IV fluids, and surgical consult",
+            "Start IV proton pump inhibitor",
+            "Order abdominal CT with contrast",
+            "ERCP for common bile duct stone removal",
+            "Start IV antibiotics and bowel rest",
+            "Colonoscopy for tissue biopsy",
+            "Upper endoscopy with biopsy",
+        ],
+        "neurological": [
+            "Emergent CT head without contrast",
+            "Administer IV tPA within the treatment window",
+            "Lumbar puncture after CT head",
+            "Start IV acyclovir empirically",
+            "MRI brain with gadolinium",
+            "EEG monitoring and start levetiracetam",
+            "IV immunoglobulin therapy",
+            "Start high-dose IV methylprednisolone",
+        ],
+    }
+
+    USMLE_PHARM_EFFECTS = {
+        "cardiovascular": {
+            "Lisinopril": {"monitor": "Hyperkalemia and angioedema", "mechanism": "ACE inhibition reduces aldosterone, retaining potassium"},
+            "Metoprolol": {"monitor": "Bradycardia and bronchospasm", "mechanism": "Beta-1 blockade reduces heart rate; beta-2 blockade in lungs"},
+            "Warfarin": {"monitor": "Bleeding and INR elevation", "mechanism": "Inhibits vitamin K-dependent clotting factor synthesis"},
+            "Atorvastatin": {"monitor": "Rhabdomyolysis and hepatotoxicity", "mechanism": "HMG-CoA reductase inhibition can cause myopathy"},
+            "Amiodarone": {"monitor": "Thyroid dysfunction and pulmonary fibrosis", "mechanism": "Iodine content affects thyroid; direct pulmonary toxicity"},
+        },
+        "diabetes": {
+            "Metformin": {"monitor": "Lactic acidosis", "mechanism": "Impaired lactate clearance especially with renal insufficiency"},
+            "Glipizide": {"monitor": "Hypoglycemia", "mechanism": "Stimulates insulin secretion regardless of glucose level"},
+            "Empagliflozin": {"monitor": "Euglycemic diabetic ketoacidosis and UTIs", "mechanism": "SGLT2 inhibition causes glucosuria and volume depletion"},
+        },
+        "respiratory": {
+            "Fluticasone": {"monitor": "Oral candidiasis and adrenal suppression", "mechanism": "Local immunosuppression in oropharynx; systemic absorption"},
+            "Montelukast": {"monitor": "Neuropsychiatric effects", "mechanism": "Leukotriene receptor modulation may affect CNS pathways"},
+        },
+        "pain": {
+            "Ibuprofen": {"monitor": "GI bleeding and renal impairment", "mechanism": "COX inhibition reduces protective prostaglandins"},
+            "Acetaminophen": {"monitor": "Hepatotoxicity", "mechanism": "Toxic metabolite NAPQI depletes glutathione at high doses"},
+        },
+    }
+
     def generate_usmle_question(self) -> Dict[str, str]:
-        """Generate USMLE-style question"""
+        """Generate USMLE-style question with real medical content"""
         patient = self.generate_patient_demographics()
         category = random.choice(["cardiovascular", "respiratory", "gastrointestinal", "neurological"])
         
-        # Question templates
+        dx_data = self.USMLE_DIAGNOSIS_OPTIONS[category]
+        mgmt_options = self.USMLE_MANAGEMENT_OPTIONS[category]
+        pharm_categories = list(self.USMLE_PHARM_EFFECTS.keys())
+
         templates = [
-            {
-                "stem": f"A {patient['age']}-year-old {patient['gender']} presents with {{symptoms}}. "
-                       f"Physical examination reveals {{findings}}. Which of the following is the most likely diagnosis?",
-                "type": "diagnosis",
-            },
-            {
-                "stem": f"A {patient['age']}-year-old {patient['gender']} with a history of {{conditions}} "
-                       f"presents with {{symptoms}}. What is the most appropriate next step in management?",
-                "type": "management",
-            },
-            {
-                "stem": f"A {patient['age']}-year-old {patient['gender']} is started on {{medication}}. "
-                       f"Which of the following adverse effects should be monitored?",
-                "type": "pharmacology",
-            },
+            {"type": "diagnosis"},
+            {"type": "management"},
+            {"type": "pharmacology"},
         ]
-        
         template = random.choice(templates)
-        symptoms = random.sample(SYMPTOMS[category], 2)
+        symptoms = random.sample(SYMPTOMS[category], min(2, len(SYMPTOMS[category])))
+        findings = random.sample(dx_data["findings"], min(2, len(dx_data["findings"])))
         
-        question_stem = template["stem"].format(
-            symptoms=", ".join(symptoms),
-            findings="relevant clinical findings",
-            conditions=patient["conditions"][0] if patient["conditions"] else "no significant medical history",
-            medication=random.choice(MEDICATIONS.get(category, MEDICATIONS["pain"]))["name"],
-        )
+        if template["type"] == "diagnosis":
+            correct_dx = random.choice(dx_data["correct"])
+            distractors = random.sample(dx_data["distractors"], 4)
+            
+            question_stem = (
+                f"A {patient['age']}-year-old {patient['gender']} presents with "
+                f"{', '.join(symptoms)}. Physical examination reveals {', '.join(findings)}. "
+                f"Which of the following is the most likely diagnosis?"
+            )
+            
+            all_options = [correct_dx] + distractors
+            random.shuffle(all_options)
+            correct_idx = all_options.index(correct_dx)
+            correct_letter = chr(65 + correct_idx)
+            
+            instruction = f"Answer this USMLE-style question:\n\n{question_stem}\n\n"
+            instruction += "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(all_options))
+            
+            output = (
+                f"**Correct Answer: {correct_letter}**\n\n"
+                f"**Explanation:**\n"
+                f"{correct_dx} is the most likely diagnosis. The combination of "
+                f"{', '.join(symptoms)} with {', '.join(findings)} is characteristic of this condition.\n\n"
+                f"**Why other options are incorrect:**\n"
+            )
+            for i, opt in enumerate(all_options):
+                if opt != correct_dx:
+                    output += f"- {chr(65+i)}. {opt} \u2014 Would typically present with different findings\n"
+            output += f"\n**Related Topics:** {category.title()}, Differential Diagnosis"
+
+        elif template["type"] == "management":
+            condition = patient["conditions"][0]["name"] if patient["conditions"] else "no significant medical history"
+            correct_mgmt = random.choice(mgmt_options)
+            other_mgmts = [m for m in mgmt_options if m != correct_mgmt]
+            distractors = random.sample(other_mgmts, min(4, len(other_mgmts)))
+            
+            question_stem = (
+                f"A {patient['age']}-year-old {patient['gender']} with a history of {condition} "
+                f"presents with {', '.join(symptoms)}. "
+                f"What is the most appropriate next step in management?"
+            )
+            
+            all_options = [correct_mgmt] + distractors
+            random.shuffle(all_options)
+            correct_idx = all_options.index(correct_mgmt)
+            correct_letter = chr(65 + correct_idx)
+            
+            instruction = f"Answer this USMLE-style question:\n\n{question_stem}\n\n"
+            instruction += "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(all_options))
+            
+            output = (
+                f"**Correct Answer: {correct_letter}**\n\n"
+                f"**Explanation:**\n"
+                f"{correct_mgmt} is the most appropriate next step given the clinical presentation "
+                f"of {', '.join(symptoms)} in a patient with {condition}.\n\n"
+                f"**Key Management Principles:**\n"
+                f"1. Stabilize the patient and address life-threatening conditions first\n"
+                f"2. Obtain necessary diagnostic studies to confirm the diagnosis\n"
+                f"3. Initiate evidence-based treatment per current guidelines\n\n"
+                f"**Related Topics:** {category.title()}, Clinical Management"
+            )
+
+        else:  # pharmacology
+            pharm_cat = random.choice(pharm_categories)
+            drug_name = random.choice(list(self.USMLE_PHARM_EFFECTS[pharm_cat].keys()))
+            drug_info = self.USMLE_PHARM_EFFECTS[pharm_cat][drug_name]
+            correct_effect = drug_info["monitor"]
+            mechanism = drug_info["mechanism"]
+            
+            other_effects = [
+                "Hyponatremia", "Peripheral neuropathy", "Photosensitivity",
+                "QT prolongation", "Aplastic anemia", "Stevens-Johnson syndrome",
+                "Gynecomastia", "Ototoxicity", "Nephrotoxicity", "Agranulocytosis",
+            ]
+            distractors = random.sample([e for e in other_effects if e not in correct_effect], 4)
+            
+            question_stem = (
+                f"A {patient['age']}-year-old {patient['gender']} is started on {drug_name}. "
+                f"Which of the following adverse effects should be monitored?"
+            )
+            
+            all_options = [correct_effect] + distractors
+            random.shuffle(all_options)
+            correct_idx = all_options.index(correct_effect)
+            correct_letter = chr(65 + correct_idx)
+            
+            instruction = f"Answer this USMLE-style question:\n\n{question_stem}\n\n"
+            instruction += "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(all_options))
+            
+            output = (
+                f"**Correct Answer: {correct_letter}**\n\n"
+                f"**Explanation:**\n"
+                f"{correct_effect} is the key adverse effect to monitor with {drug_name}. "
+                f"Mechanism: {mechanism}.\n\n"
+                f"**Pharmacology High-Yield:**\n"
+                f"- Drug: {drug_name}\n"
+                f"- Primary concern: {correct_effect}\n"
+                f"- Mechanism: {mechanism}\n\n"
+                f"**Related Topics:** Pharmacology, Adverse Drug Reactions"
+            )
         
-        # Generate options
-        options = ["Option A - Correct answer", "Option B - Distractor 1", 
-                  "Option C - Distractor 2", "Option D - Distractor 3", "Option E - Distractor 4"]
-        
-        instruction = f"""Answer this USMLE-style question:
-
-{question_stem}
-
-A. {options[0]}
-B. {options[1]}
-C. {options[2]}
-D. {options[3]}
-E. {options[4]}"""
-
-        output = f"""**Correct Answer: A**
-
-**Explanation:**
-{options[0]} is correct because it directly addresses the clinical presentation described.
-
-**Why other options are incorrect:**
-- B: {options[1]} - Does not fit the clinical picture
-- C: {options[2]} - Would present differently
-- D: {options[3]} - Less likely given the history
-- E: {options[4]} - Not supported by the findings
-
-**High-Yield Points:**
-1. Key clinical features to recognize
-2. Important differential considerations
-3. First-line management approach
-
-**Related Topics:** {category.title()}, Clinical Medicine"""
-
         return {
             "instruction": instruction,
             "input": "",

@@ -19,6 +19,7 @@ from src.core.security.hipaa import HIPAAComplianceService, get_hipaa_service
 
 from src.layers.knowledge_graph import KnowledgeGraphService
 from src.layers.rule_engine import RuleEngineService, get_rule_engine_service
+from src.layers.rule_engine.triage import PatientAssessment, TriageUrgency
 from src.layers.llm import LLMService
 from src.layers.llm.prompts import RoleType
 from src.layers.verifier import VerifierService
@@ -263,13 +264,42 @@ class IMIOrchestrator:
         
         results = {"facts": [], "sources": []}
         
-        # Extract medical entities from query
-        # In production, would use NER
-        query_lower = query.lower()
+        # Search for diseases mentioned in query
+        try:
+            disease_results = await self.kg.search_diseases(query, limit=3)
+            for d in disease_results:
+                name = d.get("name", "")
+                desc = d.get("description", "")[:200]
+                if name:
+                    results["facts"].append(f"Disease: {name} — {desc}")
+                    results["sources"].append(f"KG:disease:{name}")
+        except Exception as e:
+            logger.warning(f"KG disease search failed: {e}")
         
-        # Search for diseases mentioned
-        # Search for drugs mentioned
-        # Get relevant guidelines
+        # Search for drugs if method available
+        if hasattr(self.kg, "search_drugs"):
+            try:
+                drug_results = await self.kg.search_drugs(query, limit=3)
+                for d in drug_results:
+                    name = d.get("name", "")
+                    if name:
+                        results["facts"].append(f"Drug: {name} ({d.get('drug_class', '')})")
+                        results["sources"].append(f"KG:drug:{name}")
+            except Exception as e:
+                logger.warning(f"KG drug search failed: {e}")
+        
+        # Check drug interactions for patient medications
+        patient_meds = patient_context.get("medications", [])
+        if patient_meds and hasattr(self.kg, "get_drug_interactions"):
+            try:
+                for med in patient_meds[:5]:
+                    interactions = await self.kg.get_drug_interactions(med)
+                    for ix in (interactions or []):
+                        desc = ix.get("description", "")[:200]
+                        results["facts"].append(f"Drug Interaction ({med}): {desc}")
+                        results["sources"].append(f"KG:interaction:{med}")
+            except Exception as e:
+                logger.warning(f"KG interaction check failed: {e}")
         
         return results
     
@@ -290,31 +320,78 @@ class IMIOrchestrator:
         patient_context: Dict[str, Any],
         user_id: str,
     ) -> Dict[str, Any]:
-        """Run safety checks through rule engine"""
+        """Run safety checks through real RuleEngineService"""
         result = {
             "rules_triggered": [],
             "warnings": [],
             "blocked": False,
             "block_reason": None,
             "block_message": None,
+            "constraints": [],
         }
         
-        # Check for red flags in query
-        query_lower = query.lower()
+        try:
+            # Build PatientAssessment from available context
+            assessment = PatientAssessment(
+                age=patient_context.get("age", 30),
+                sex=patient_context.get("gender"),
+                chief_complaint=query[:200],
+                symptoms=patient_context.get("symptoms", []),
+                medical_conditions=patient_context.get("conditions", []),
+                current_medications=patient_context.get("medications", []),
+                allergies=patient_context.get("allergies", []),
+                is_pregnant=patient_context.get("is_pregnant", False),
+                is_breastfeeding=patient_context.get("is_breastfeeding", False),
+            )
+            
+            # Run full assessment through real rule engine
+            full_assessment = self.rule_engine.assess_patient(assessment, user_id)
+            triage = full_assessment.triage
+            
+            result["rules_triggered"] = list(triage.rules_triggered)
+            
+            if triage.urgency == TriageUrgency.EMERGENCY:
+                result["warnings"].append(f"EMERGENCY triage level detected")
+                result["constraints"].append("MUST recommend immediate medical attention")
+            
+            if triage.red_flags_detected:
+                for rf in triage.red_flags_detected:
+                    result["warnings"].append(f"Red flag: {rf}")
+            
+            for rec in triage.recommendations:
+                result["constraints"].append(rec)
+            
+            if not full_assessment.is_safe_to_proceed:
+                result["blocked"] = True
+                blocking = (
+                    full_assessment.blocking_issues
+                    if hasattr(full_assessment, "blocking_issues")
+                    else ["Safety check failed"]
+                )
+                result["block_reason"] = "; ".join(blocking)
+                result["block_message"] = (
+                    "This request has been blocked for safety reasons. "
+                    "Please consult a healthcare professional directly."
+                )
         
-        emergency_keywords = [
-            "chest pain", "can't breathe", "severe bleeding",
-            "unconscious", "stroke", "heart attack", "suicide",
-        ]
+        except Exception as e:
+            logger.error(f"Rule engine assessment failed, using fallback: {e}")
+            query_lower = query.lower()
+            emergency_keywords = [
+                "chest pain", "can't breathe", "severe bleeding",
+                "unconscious", "stroke", "heart attack", "suicide",
+            ]
+            for keyword in emergency_keywords:
+                if keyword in query_lower:
+                    result["warnings"].append(f"Emergency keyword detected: {keyword}")
+                    result["rules_triggered"].append("emergency_detection_fallback")
         
-        for keyword in emergency_keywords:
-            if keyword in query_lower:
-                result["warnings"].append(f"Emergency keyword detected: {keyword}")
-                result["rules_triggered"].append("emergency_detection")
-        
-        # If patient context, check medications
-        if patient_context.get("medications"):
-            result["rules_triggered"].append("medication_context_check")
+        # Always apply allergy constraints
+        if patient_context.get("allergies"):
+            result["constraints"].append(
+                f"MUST NOT recommend: {', '.join(patient_context['allergies'])}"
+            )
+            result["rules_triggered"].append("allergy_check")
         
         return result
     

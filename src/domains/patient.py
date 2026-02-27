@@ -243,12 +243,44 @@ class PatientService:
         query: str,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get general health information"""
-        # This would use the LLM with patient role
+        """Get general health information via LLM with safety context"""
+        sources = []
+        knowledge_context = None
+        
+        # Retrieve knowledge graph context if available
+        if self.knowledge_graph:
+            try:
+                disease_results = await self.knowledge_graph.search_diseases(query, limit=3)
+                if disease_results:
+                    knowledge_context = "Medical Knowledge:\n" + "\n".join(
+                        f"- {d.get('name', '')}: {d.get('description', '')[:200]}"
+                        for d in disease_results
+                    )
+                    sources = [f"KG:{d.get('name', '')}" for d in disease_results]
+            except Exception:
+                pass
+        
+        # Generate response via LLM
+        response_text = "I'm unable to provide health information at this time. Please consult a healthcare provider."
+        if self.llm:
+            try:
+                response_text = await self.llm.generate(
+                    query=query,
+                    role=RoleType.PATIENT,
+                    knowledge_context=knowledge_context,
+                    safety_context={"constraints": [
+                        "Provide general health information only",
+                        "Do NOT diagnose or prescribe",
+                        "Always recommend consulting a healthcare professional",
+                    ]},
+                )
+            except Exception:
+                pass
+        
         return {
             "query": query,
-            "response": "Health information would be provided here using the LLM.",
-            "sources": [],
+            "response": response_text,
+            "sources": sources,
             "disclaimer": "This information is for educational purposes only.",
         }
     
@@ -287,11 +319,71 @@ class PatientService:
         lab_results: Dict[str, Any],
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Analyze lab results and provide interpretation"""
-        # This would analyze lab values and provide patient-friendly interpretation
+        """Analyze lab results and provide patient-friendly interpretation"""
+        # Identify abnormal values based on standard reference ranges
+        REFERENCE_RANGES = {
+            "glucose": (70, 100, "mg/dL"),
+            "hemoglobin": (12.0, 17.5, "g/dL"),
+            "wbc": (4000, 11000, "/uL"),
+            "platelets": (150000, 400000, "/uL"),
+            "creatinine": (0.6, 1.2, "mg/dL"),
+            "alt": (7, 56, "U/L"),
+            "ast": (10, 40, "U/L"),
+            "tsh": (0.4, 4.0, "mIU/L"),
+            "cholesterol_total": (0, 200, "mg/dL"),
+            "hba1c": (0, 5.7, "%"),
+        }
+        
+        abnormal_values = []
+        for test_name, value in lab_results.items():
+            test_key = test_name.lower().replace(" ", "_")
+            if test_key in REFERENCE_RANGES and isinstance(value, (int, float)):
+                low, high, unit = REFERENCE_RANGES[test_key]
+                if value < low:
+                    abnormal_values.append({
+                        "test": test_name, "value": value, "unit": unit,
+                        "status": "low", "reference": f"{low}-{high}",
+                    })
+                elif value > high:
+                    abnormal_values.append({
+                        "test": test_name, "value": value, "unit": unit,
+                        "status": "high", "reference": f"{low}-{high}",
+                    })
+        
+        # Build analysis via LLM
+        analysis_text = "Unable to generate analysis at this time."
+        recommendations = ["Discuss these results with your healthcare provider."]
+        
+        if self.llm:
+            lab_summary = "; ".join(
+                f"{test_name}={value}" for test_name, value in lab_results.items()
+            )
+            abnormal_summary = "; ".join(
+                f"{a['test']} is {a['status']} ({a['value']} {a['unit']}, ref {a['reference']})"
+                for a in abnormal_values
+            ) if abnormal_values else "All values within normal range"
+            
+            try:
+                analysis_text = await self.llm.generate(
+                    query=f"Explain these lab results in simple terms: {lab_summary}",
+                    role=RoleType.PATIENT,
+                    knowledge_context=f"Abnormal findings: {abnormal_summary}",
+                    safety_context={"constraints": [
+                        "Explain in patient-friendly language",
+                        "Do NOT diagnose based on lab values alone",
+                        "Recommend follow-up with healthcare provider",
+                    ]},
+                )
+                if abnormal_values:
+                    recommendations.append(
+                        "Some values are outside normal ranges — follow up with your provider."
+                    )
+            except Exception:
+                pass
+        
         return {
-            "analysis": "Lab result analysis would be provided here.",
-            "abnormal_values": [],
-            "recommendations": [],
+            "analysis": analysis_text,
+            "abnormal_values": abnormal_values,
+            "recommendations": recommendations,
             "disclaimer": "Please discuss these results with your healthcare provider.",
         }

@@ -144,9 +144,10 @@ The IMI (Intelligent Medical Interface) platform is a production-grade medical L
 **Purpose:** Natural language generation, explanation, and synthesis. NEVER decides alone on safety.
 
 **Components:**
-- `meditron.py` - Meditron model wrapper:
-  - Model loading with quantization (4-bit, 8-bit)
-  - LoRA adapter management
+- `meditron.py` - Meditron-70B model wrapper:
+  - Model loading with quantization (4-bit QLoRA, 8-bit)
+  - LoRA adapter management (r=32, alpha=64, 7 target modules)
+  - Parallel multi-GPU training support
   - Text generation with safety guardrails
   - Streaming support
   - Embedding generation

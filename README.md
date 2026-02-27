@@ -17,8 +17,9 @@ A production-grade medical LLM platform with hybrid cognition architecture servi
    - If-then medical reasoning
 
 3. **Layer 3 - LLM (Language + Synthesis)**
-   - Meditron-based medical language model
-   - Fine-tuned for explanation, summarization, conversation, document drafting
+   - Meditron-70B medical language model (4-bit QLoRA)
+   - 6 domain-specific LoRA adapters (r=32, alpha=64)
+   - Parallel multi-GPU training across A100-80GB nodes
    - Never decides alone - always verified
 
 4. **Layer 4 - Verifier/Critic Model**
@@ -226,7 +227,7 @@ python scripts/data_collection/collect_datasets.py      # Download open datasets
 python scripts/data_collection/synthetic_generator.py   # Generate synthetic data
 python scripts/data_collection/ingest_pdfs.py           # Ingest WHO/FDA PDFs
 python scripts/training/prepare_data.py                 # Prepare for training
-python scripts/training/train_lora.py --adapter all     # Train adapters
+python scripts/training/train_lora.py --adapter all --parallel  # Train adapters (multi-GPU)
 ```
 
 ## Documentation

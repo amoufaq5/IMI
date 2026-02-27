@@ -49,13 +49,16 @@ class AdapterTrainingConfig:
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
-    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj"])
-    learning_rate: float = 2e-4
+    target_modules: List[str] = field(default_factory=lambda: [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ])
+    learning_rate: float = 1e-4
     num_epochs: int = 3
-    batch_size: int = 4
-    gradient_accumulation_steps: int = 4
+    batch_size: int = 2
+    gradient_accumulation_steps: int = 8
     warmup_ratio: float = 0.03
-    max_seq_length: int = 2048
+    max_seq_length: int = 4096
     weight_decay: float = 0.01
 
 
@@ -64,49 +67,49 @@ ADAPTER_CONFIGS = {
     "patient_triage": AdapterTrainingConfig(
         name="patient_triage",
         description="Patient symptom assessment and triage",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=2e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=1e-4,
         num_epochs=3,
     ),
     "clinical_pharmacist": AdapterTrainingConfig(
         name="clinical_pharmacist",
         description="Drug interactions and medication safety",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=2e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=1e-4,
         num_epochs=3,
     ),
     "clinical_decision": AdapterTrainingConfig(
         name="clinical_decision",
         description="Clinical decision support for doctors",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=1e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=5e-5,
         num_epochs=4,
     ),
     "education": AdapterTrainingConfig(
         name="education",
         description="Medical education and USMLE preparation",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=2e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=1e-4,
         num_epochs=3,
     ),
     "regulatory_qa": AdapterTrainingConfig(
         name="regulatory_qa",
         description="Pharmaceutical regulatory and QA",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=2e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=1e-4,
         num_epochs=3,
     ),
     "research": AdapterTrainingConfig(
         name="research",
         description="Medical research and literature synthesis",
-        lora_r=16,
-        lora_alpha=32,
-        learning_rate=1e-4,
+        lora_r=32,
+        lora_alpha=64,
+        learning_rate=5e-5,
         num_epochs=4,
     ),
 }
@@ -172,6 +175,7 @@ class InstructionDataset(Dataset):
         
         labels = tokenized["input_ids"].clone()
         labels[0, :prompt_length] = -100  # Mask prompt
+        labels[labels == self.tokenizer.pad_token_id] = -100  # Mask padding
         
         return {
             "input_ids": tokenized["input_ids"].squeeze(),
@@ -185,13 +189,15 @@ class LoRATrainer:
     
     def __init__(
         self,
-        base_model_name: str = "epfl-llm/meditron-7b",
+        base_model_name: str = "epfl-llm/meditron-70b",
         use_4bit: bool = True,
         use_8bit: bool = False,
+        gpu_id: Optional[int] = None,
     ):
         self.base_model_name = base_model_name
         self.use_4bit = use_4bit
         self.use_8bit = use_8bit
+        self.gpu_id = gpu_id
         self.model = None
         self.tokenizer = None
     
@@ -221,11 +227,17 @@ class LoRATrainer:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
+        # Device map: target specific GPU if set, otherwise auto-distribute
+        if self.gpu_id is not None:
+            device_map = {"":  self.gpu_id}
+        else:
+            device_map = "auto"
+        
         # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
             self.base_model_name,
             quantization_config=bnb_config,
-            device_map="auto",
+            device_map=device_map,
             trust_remote_code=True,
             torch_dtype=torch.float16,
         )
@@ -352,6 +364,8 @@ class LoRATrainer:
             fp16=True,
             gradient_checkpointing=True,
             optim="paged_adamw_8bit",
+            lr_scheduler_type="cosine",
+            metric_for_best_model="eval_loss" if val_dataset else None,
         )
         
         # Data collator
@@ -409,7 +423,7 @@ def main():
     )
     parser.add_argument(
         "--base-model",
-        default="epfl-llm/meditron-7b",
+        default="epfl-llm/meditron-70b",
         help="Base model name or path",
     )
     parser.add_argument(
@@ -422,6 +436,17 @@ def main():
         "--use-8bit",
         action="store_true",
         help="Use 8-bit quantization",
+    )
+    parser.add_argument(
+        "--gpu",
+        type=int,
+        default=None,
+        help="GPU ID for this training job (for parallel multi-GPU training)",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Train all adapters in parallel across GPUs (requires --adapter all)",
     )
     parser.add_argument(
         "--resume-from",
@@ -445,20 +470,69 @@ def main():
     
     args = parser.parse_args()
     
-    # Initialize trainer
-    trainer = LoRATrainer(
-        base_model_name=args.base_model,
-        use_4bit=args.use_4bit and not args.use_8bit,
-        use_8bit=args.use_8bit,
-    )
-    
     # Determine adapters to train
     if args.adapter == "all":
         adapters = list(ADAPTER_CONFIGS.keys())
     else:
         adapters = [args.adapter]
     
-    # Train each adapter
+    # ─── Parallel multi-GPU training ───────────────────────────────
+    if args.parallel and len(adapters) > 1:
+        import subprocess, sys
+        num_gpus = torch.cuda.device_count()
+        if num_gpus < 2:
+            logger.warning("Only 1 GPU detected — falling back to sequential training")
+        else:
+            logger.info(f"Launching parallel training across {num_gpus} GPUs for {len(adapters)} adapters")
+            processes = []
+            for idx, adapter_name in enumerate(adapters):
+                gpu_id = idx % num_gpus
+                cmd = [
+                    sys.executable, __file__,
+                    "--adapter", adapter_name,
+                    "--base-model", args.base_model,
+                    "--gpu", str(gpu_id),
+                ]
+                if args.use_8bit:
+                    cmd.append("--use-8bit")
+                if args.epochs:
+                    cmd.extend(["--epochs", str(args.epochs)])
+                if args.batch_size:
+                    cmd.extend(["--batch-size", str(args.batch_size)])
+                if args.learning_rate:
+                    cmd.extend(["--learning-rate", str(args.learning_rate)])
+                
+                logger.info(f"  GPU {gpu_id} ← {adapter_name}")
+                env = os.environ.copy()
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                proc = subprocess.Popen(cmd, env=env)
+                processes.append((adapter_name, proc))
+            
+            # Wait for all to finish
+            failed = []
+            for adapter_name, proc in processes:
+                rc = proc.wait()
+                if rc != 0:
+                    failed.append(adapter_name)
+                    logger.error(f"Training FAILED for {adapter_name} (exit code {rc})")
+                else:
+                    logger.info(f"Training COMPLETE for {adapter_name}")
+            
+            if failed:
+                logger.error(f"Failed adapters: {failed}")
+                raise SystemExit(1)
+            
+            logger.info("All parallel training jobs completed successfully!")
+            return
+    
+    # ─── Single-GPU / sequential training ──────────────────────────
+    trainer = LoRATrainer(
+        base_model_name=args.base_model,
+        use_4bit=args.use_4bit and not args.use_8bit,
+        use_8bit=args.use_8bit,
+        gpu_id=args.gpu,
+    )
+    
     for adapter_name in adapters:
         config = ADAPTER_CONFIGS[adapter_name]
         
@@ -476,8 +550,17 @@ def main():
             resume_from=args.resume_from,
         )
         
-        # Reset model for next adapter
-        trainer.model = None
+        # Reset LoRA weights but keep base model loaded to avoid
+        # reloading the full 70B model from scratch for each adapter
+        if hasattr(trainer, 'model') and trainer.model is not None:
+            try:
+                from peft import PeftModel
+                if isinstance(trainer.model, PeftModel):
+                    trainer.model = trainer.model.get_base_model()
+                else:
+                    trainer.model = None
+            except Exception:
+                trainer.model = None
 
 
 if __name__ == "__main__":

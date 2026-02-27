@@ -66,7 +66,6 @@ python scripts/data_collection/collect_datasets.py
 | MedMCQA | ~180k | Medical MCQs |
 | PubMedQA | ~1k | Research Q&A |
 | HealthCareMagic | ~100k | Patient conversations |
-| ChatDoctor | ~100k | Medical dialogues |
 
 ### 1.2 Ingest Your WHO/FDA PDFs
 
@@ -135,13 +134,12 @@ data/final/
 
 ## Step 3: Training
 
-### Hardware Requirements
+### Hardware Requirements (Meditron-70B)
 
-| Configuration | GPU VRAM | Training Time |
-|---------------|----------|---------------|
-| 4-bit (recommended) | 16GB | 4-8 hours |
-| 8-bit | 24GB | 3-6 hours |
-| Full precision | 48GB+ | 2-4 hours |
+| Configuration | GPU VRAM | Training Time (1 adapter) | Training Time (all, parallel) |
+|---------------|----------|--------------------------|------------------------------|
+| 4-bit QLoRA (recommended) | 80GB (A100-80GB) | 5-9 hours | ~9 hrs on 4×A100-80GB |
+| 8-bit | 80GB+ | 4-7 hours | ~7 hrs on 6×A100-80GB |
 
 ### Train Single Adapter
 
@@ -160,21 +158,28 @@ python scripts/training/train_lora.py \
 ### Train All Adapters
 
 ```bash
+# Parallel across multiple GPUs (recommended)
+python scripts/training/train_lora.py --adapter all --parallel
+
+# Sequential on a single GPU (fallback)
 python scripts/training/train_lora.py --adapter all
+
+# Train a single adapter on a specific GPU
+python scripts/training/train_lora.py --adapter patient_triage --gpu 0
 ```
 
 ### Training Configuration
 
 Each adapter has optimized defaults:
 
-| Adapter | LoRA r | Alpha | LR | Epochs |
-|---------|--------|-------|-----|--------|
-| patient_triage | 16 | 32 | 2e-4 | 3 |
-| clinical_pharmacist | 16 | 32 | 2e-4 | 3 |
-| clinical_decision | 16 | 32 | 1e-4 | 4 |
-| education | 16 | 32 | 2e-4 | 3 |
-| regulatory_qa | 16 | 32 | 2e-4 | 3 |
-| research | 16 | 32 | 1e-4 | 4 |
+| Adapter | LoRA r | Alpha | LR | Epochs | Target Modules |
+|---------|--------|-------|-----|--------|----------------|
+| patient_triage | 32 | 64 | 1e-4 | 3 | q/k/v/o/gate/up/down_proj |
+| clinical_pharmacist | 32 | 64 | 1e-4 | 3 | q/k/v/o/gate/up/down_proj |
+| clinical_decision | 32 | 64 | 5e-5 | 4 | q/k/v/o/gate/up/down_proj |
+| education | 32 | 64 | 1e-4 | 3 | q/k/v/o/gate/up/down_proj |
+| regulatory_qa | 32 | 64 | 1e-4 | 3 | q/k/v/o/gate/up/down_proj |
+| research | 32 | 64 | 5e-5 | 4 | q/k/v/o/gate/up/down_proj |
 
 ### Resume Training
 
@@ -195,7 +200,10 @@ python scripts/training/evaluate_adapter.py --adapter patient_triage
 
 **Metrics:**
 - Perplexity on validation set
-- Sample generations for manual review
+- USMLE MCQ accuracy (per-topic breakdown)
+- Triage classification F1 (per-class precision/recall)
+- Safety audit (unsafe claim rate, emergency miss rate, disclaimer rate)
+- ROUGE scores (ROUGE-1, ROUGE-2, ROUGE-L)
 - Results saved to `adapters/{name}/evaluation_results.json`
 
 ---
@@ -261,8 +269,8 @@ python scripts/data_collection/ingest_pdfs.py
 # 3. Prepare data
 python scripts/training/prepare_data.py
 
-# 4. Train (start with one adapter)
-python scripts/training/train_lora.py --adapter patient_triage
+# 4. Train all adapters in parallel (multi-GPU)
+python scripts/training/train_lora.py --adapter all --parallel
 
 # 5. Evaluate
 python scripts/training/evaluate_adapter.py --adapter patient_triage
@@ -272,19 +280,16 @@ python scripts/training/evaluate_adapter.py --adapter patient_triage
 
 ## Cloud Training (RunPod)
 
-For faster training, use RunPod with A100 GPUs:
+For parallel training, use RunPod with multiple A100-80GB GPUs:
 
 ```bash
-# On RunPod instance
+# On RunPod instance (4×A100-80GB recommended)
 git clone <your-repo>
 cd imi
 pip install -r requirements.txt
 
-# Train with 8-bit for A100
-python scripts/training/train_lora.py \
-    --adapter all \
-    --use-8bit \
-    --batch-size 8
+# Train all adapters in parallel across GPUs
+python scripts/training/train_lora.py --adapter all --parallel
 ```
 
 See `docs/RUNPOD_DEPLOYMENT_GUIDE.md` for detailed cloud setup.
