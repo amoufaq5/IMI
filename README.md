@@ -17,9 +17,9 @@ A production-grade medical LLM platform with hybrid cognition architecture servi
    - If-then medical reasoning
 
 3. **Layer 3 - LLM (Language + Synthesis)**
-   - Meditron-70B medical language model (4-bit QLoRA)
-   - 6 domain-specific LoRA adapters (r=32, alpha=64)
-   - Parallel multi-GPU training across A100-80GB nodes
+   - Meditron-7B medical language model (4-bit QLoRA)
+   - 6 domain-specific LoRA adapters (r=16, alpha=32)
+   - Parallel multi-GPU training support
    - Never decides alone - always verified
 
 4. **Layer 4 - Verifier/Critic Model**

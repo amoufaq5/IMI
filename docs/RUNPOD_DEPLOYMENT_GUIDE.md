@@ -17,17 +17,17 @@ Complete guide for deploying and training IMI on RunPod GPU cloud.
 
 | Use Case | GPU | VRAM | Cost/hr | Pod Type |
 |----------|-----|------|---------|----------|
-| **Development** | RTX A5000 | 24GB | ~$0.40 | Community |
-| **Training (single adapter)** | A100 80GB | 80GB | ~$3.00 | Secure |
-| **Training (parallel, recommended)** | 4×A100 80GB | 320GB | ~$12.00 | Secure |
-| **Training (parallel, fast)** | 6×A100 80GB | 480GB | ~$18.00 | Secure |
+| **Development** | RTX 3090 | 24GB | ~$0.30 | Community |
+| **Training (single adapter)** | A100 40GB | 40GB | ~$1.50 | Secure |
+| **Training (parallel, recommended)** | 4×A100 40GB | 160GB | ~$6.00 | Secure |
+| **Training (fast)** | A100 80GB | 80GB | ~$2.00 | Secure |
 
 ### Launch Steps
 
 1. Click **"Deploy"** → **"GPU Pods"**
 2. Select template: **"RunPod Pytorch 2.1"** or **"RunPod Transformers"**
-3. Choose GPU: **4×A100-80GB** recommended for parallel training
-4. Set volume size: **250GB** (for 70B model + data + adapters)
+3. Choose GPU: **A100 40GB** recommended (or multi-GPU for parallel training)
+4. Set volume size: **100GB** (for 7B model + data + adapters)
 5. Click **"Deploy"**
 
 ---
@@ -77,9 +77,10 @@ pip install bitsandbytes accelerate peft trl
 
 # Option 2: Pre-download to workspace (persists across restarts)
 cd /workspace
-huggingface-cli download epfl-llm/meditron-70b --local-dir ./models/meditron-70b
+huggingface-cli download epfl-llm/meditron-7b --local-dir ./models/meditron-7b
 
-# NOTE: 70B model requires ~150GB storage and multi-GPU setup (4×A100-80GB recommended)
+# For 70B (requires 150GB+ storage and multi-GPU):
+# huggingface-cli download epfl-llm/meditron-70b --local-dir ./models/meditron-70b
 ```
 
 ---
@@ -131,7 +132,7 @@ python scripts/training/train_lora.py --adapter patient_triage --gpu 0
 # Train with local model path
 python scripts/training/train_lora.py \
     --adapter patient_triage \
-    --base-model /workspace/models/meditron-70b
+    --base-model /workspace/models/meditron-7b
 
 # Train all adapters in PARALLEL across multiple GPUs (recommended)
 python scripts/training/train_lora.py --adapter all --parallel
@@ -241,12 +242,12 @@ chmod +x setup_runpod.sh
 | Task | GPU | Time | Cost |
 |------|-----|------|------|
 | Data collection | Any | 30 min | ~$0.20 |
-| Train 1 adapter (70B) | 1×A100 80GB | 5-9 hrs | ~$24 |
-| Train all adapters (sequential) | 1×A100 80GB | ~38 hrs | ~$115 |
-| Train all adapters (parallel) | 4×A100 80GB | **~9 hrs** | **~$108** |
-| Train all adapters (parallel) | 6×A100 80GB | **~9 hrs** | **~$162** |
+| Train 1 adapter (7B) | A100 40GB | 2-4 hrs | ~$5 |
+| Train all adapters (sequential) | A100 40GB | 12-18 hrs | ~$25 |
+| Train all adapters (parallel) | 4×A100 40GB | **~4 hrs** | **~$24** |
+| Train all adapters (parallel) | 6×A100 40GB | **~4 hrs** | **~$36** |
 
-**Tip:** Use spot instances for 50-70% savings (but may be interrupted). Parallel training on 4 GPUs gives the best cost/speed balance.
+**Tip:** Use spot instances for 50-70% savings (but may be interrupted). With 7B, even a single A100-40GB trains all adapters overnight.
 
 ---
 
@@ -274,7 +275,7 @@ ps aux | grep python
 ```bash
 # Clear cache and retry
 rm -rf ~/.cache/huggingface/
-huggingface-cli download epfl-llm/meditron-70b --local-dir /workspace/models/meditron-70b
+huggingface-cli download epfl-llm/meditron-7b --local-dir /workspace/models/meditron-7b
 ```
 
 ### Storage Full

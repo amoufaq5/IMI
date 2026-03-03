@@ -2,7 +2,7 @@
 
 ## Overview
 
-IMI trains **6 domain-specific LoRA adapters** on top of **Meditron-70B**. This document compares two strategies for training them: **sequential (one-after-another)** and **parallel (simultaneous)**, analysing efficiency, hardware requirements, and quality trade-offs.
+IMI trains **6 domain-specific LoRA adapters** on top of **Meditron-7B**. This document compares two strategies for training them: **sequential (one-after-another)** and **parallel (simultaneous)**, analysing efficiency, hardware requirements, and quality trade-offs.
 
 > **Current default**: Parallel multi-GPU training (`--parallel` flag). Each adapter trains on a separate GPU via subprocess isolation.
 
@@ -22,26 +22,26 @@ Each adapter is trained one at a time on a single GPU. The base model is loaded 
      GPU 0          GPU 0          GPU 0               GPU 0
 ```
 
-### Time Estimate (Meditron-70B, 4-bit QLoRA, single A100-80GB)
+### Time Estimate (Meditron-7B, 4-bit QLoRA, single A100-40GB)
 
 | Adapter | Dataset Size | Epochs | Est. Time |
 |---------|-------------|--------|----------|
-| patient_triage | ~50K examples | 3 | ~8 hrs |
-| clinical_pharmacist | ~30K examples | 3 | ~5 hrs |
-| clinical_decision | ~40K examples | 4 | ~9 hrs |
-| education | ~35K examples | 3 | ~6 hrs |
-| regulatory_qa | ~15K examples | 3 | ~4 hrs |
-| research | ~20K examples | 4 | ~5 hrs |
-| **Total** | | | **~37 hrs** |
+| patient_triage | ~50K examples | 3 | ~2.5 hrs |
+| clinical_pharmacist | ~30K examples | 3 | ~1.5 hrs |
+| clinical_decision | ~40K examples | 4 | ~2.5 hrs |
+| education | ~35K examples | 3 | ~1.8 hrs |
+| regulatory_qa | ~15K examples | 3 | ~1.0 hrs |
+| research | ~20K examples | 4 | ~1.5 hrs |
+| **Total** | | | **~10.8 hrs** |
 
-Add ~15 min per adapter for 70B model reset = **~38.5 hrs total wall time**.
+Add ~5 min per adapter for model reset = **~11 hrs total wall time**.
 
 ### Pros
 
 - **Simplest setup** — single GPU, no distributed infrastructure
 - **No interference** — each adapter trains independently, no gradient cross-talk
 - **Easy debugging** — one training run at a time, clear logs
-- **Lower peak memory** — only one LoRA module in memory at a time (~64 MB per adapter at r=32)
+- **Lower peak memory** — only one LoRA module in memory at a time (~8 MB per adapter at r=16)
 - **Reproducible** — deterministic ordering, easy to resume from any adapter
 
 ### Cons
@@ -73,9 +73,9 @@ Each adapter trains on a separate GPU as an independent subprocess. The base mod
 python scripts/training/train_lora.py --adapter all --parallel
 ```
 
-**Time estimate**: ~9 hrs (limited by the slowest adapter: clinical_decision at 4 epochs) — a **4× speedup**.
+**Time estimate**: ~2.5 hrs (limited by the slowest adapter: clinical_decision at 4 epochs) — a **4× speedup**.
 
-**Hardware required**: 4–6× A100-80GB (each GPU loads the full 70B model in 4-bit ≈ 40 GB).
+**Hardware required**: 6× A100-40GB (or 3× A100-80GB). 7B model in 4-bit ≈ 4 GB VRAM per GPU.
 
 ### Option B: Single-GPU Time-Sliced Parallel
 
@@ -89,9 +89,9 @@ Step 3: adapter_3 forward/backward (LoRA weights 3)
 Every N steps: optimizer.step() for all adapters
 ```
 
-**Time estimate**: ~40+ hrs (slightly slower than sequential due to switching overhead).
+**Time estimate**: ~12 hrs (slightly slower than sequential due to switching overhead).
 
-**Memory**: Base model (4-bit) ≈ 40 GB + 6 × LoRA weights ≈ 384 MB + optimizer states ≈ 3 GB. **Requires A100-80GB minimum** and is memory-tight.
+**Memory**: Base model (4-bit) ≈ 4 GB + 6 × LoRA weights ≈ 48 MB + optimizer states ≈ 300 MB. **Fits on a single A100-40GB** but is memory-tight.
 
 ### Option C: PEFT Multi-Adapter Training (Recommended for IMI)
 
@@ -117,9 +117,9 @@ for epoch in range(num_epochs):
             optimizers[adapter_name].step()
 ```
 
-**Time estimate**: ~22-25 hrs (overlap from keeping model hot, no reloads).
+**Time estimate**: ~7-8 hrs (overlap from keeping model hot, no reloads).
 
-**Memory**: Single 70B base model (~40 GB) + 6 adapter weight sets (~384 MB). Requires A100-80GB.
+**Memory**: Single 7B base model (~4 GB in 4-bit) + 6 adapter weight sets (~48 MB). Fits on a single A100-40GB.
 
 ---
 
@@ -127,17 +127,17 @@ for epoch in range(num_epochs):
 
 | Dimension | Sequential | Multi-GPU Parallel ✅ | Time-Sliced | PEFT Multi-Adapter |
 |-----------|-----------|-------------------|-------------|-------------------|
-| **Wall time** | ~38.5 hrs | **~9 hrs** | ~40+ hrs | ~22-25 hrs |
-| **Speedup** | 1× | **4×** | 0.9× | **1.6×** |
-| **GPUs needed** | 1 | 4–6 | 1 | 1 |
-| **Peak VRAM** | ~42 GB | ~42 GB × N | ~44 GB | ~43 GB |
-| **Cloud cost (A100-80GB)** | ~$115 | **~$160** | ~$120 | ~$75 |
+| **Wall time** | ~11 hrs | **~2.5 hrs** | ~12 hrs | ~7-8 hrs |
+| **Speedup** | 1× | **4×** | 0.9× | **1.5×** |
+| **GPUs needed** | 1 | 6 | 1 | 1 |
+| **Peak VRAM** | ~6 GB | ~6 GB × N | ~8 GB | ~7 GB |
+| **Cloud cost (A100-40GB)** | ~$17 | **~$15** | ~$18 | ~$12 |
 | **Adapter interference** | None | None | Possible | None (separate optimizers) |
 | **Implementation complexity** | Low | **Low (implemented)** | High | Medium |
 | **Resume capability** | Easy | Per-GPU | Complex | Moderate |
 | **Quality risk** | None | None | Gradient noise | None |
 
-> **Cloud cost** estimated at ~$3/hr per A100-80GB (on-demand). Multi-GPU costs more per-run but **4× faster time-to-result**.
+> **Cloud cost** estimated at ~$1.50/hr per A100-40GB (on-demand). Multi-GPU parallel is both **faster and cheaper** than sequential.
 
 ---
 
@@ -180,15 +180,15 @@ python scripts/training/train_lora.py --adapter patient_triage --gpu 2
 - Each adapter runs as an isolated subprocess with `CUDA_VISIBLE_DEVICES`
 - The parent process monitors all children and reports success/failure
 - If fewer GPUs than adapters, adapters are round-robin assigned (2 per GPU)
-- **Recommended**: 4× A100-80GB for 70B model with 4-bit QLoRA
-- Wall time: **~9 hrs** (vs ~38.5 hrs sequential) — **4× speedup**
+- **Recommended**: 4–6× A100-40GB for 7B model with 4-bit QLoRA
+- Wall time: **~2.5 hrs** (vs ~11 hrs sequential) — **4× speedup**
 
 ### Fallback — Sequential (Single GPU)
 
 Used automatically when `--parallel` is not set or only 1 GPU is available.
 
 - Base model loaded once, LoRA weights reset between adapters
-- Suitable for development/debugging on a single A100-80GB
+- Suitable for development/debugging on a single A100-40GB or RTX 3090
 
 ### Future — PEFT Multi-Adapter (Continuous Training)
 
@@ -208,6 +208,6 @@ For incremental production updates:
 | Is parallel training faster? | **Yes** — 4× with multi-GPU (implemented) |
 | Does it affect quality? | **No** — each adapter trains independently per-GPU |
 | What does IMI use? | **Multi-GPU parallel** (`--parallel`) as default |
-| Base model? | **Meditron-70B** with 4-bit QLoRA (r=32, alpha=64) |
-| Hardware needed? | 4–6× A100-80GB (or equivalent) |
+| Base model? | **Meditron-7B** with 4-bit QLoRA (r=16, alpha=32) |
+| Hardware needed? | 1× A100-40GB minimum, 6× for parallel |
 | Is time-sliced worth it? | **No** — complexity + quality risk, minimal speed gain |

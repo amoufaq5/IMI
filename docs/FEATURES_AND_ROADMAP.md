@@ -8,7 +8,7 @@
 |-------|-----------|--------|-------------|
 | L1 | Knowledge Graph | ✅ Done | Neo4j-based medical knowledge (diseases, drugs, symptoms, interactions) |
 | L2 | Rule Engine | ✅ Done | Deterministic safety rules, contraindication checking, drug interactions |
-| L3 | LLM Integration | ✅ Done | Meditron-70B with domain-specific LoRA adapters (QLoRA 4-bit, parallel multi-GPU training) |
+| L3 | LLM Integration | ✅ Done | Meditron-7B with domain-specific LoRA adapters (QLoRA 4-bit, parallel multi-GPU training) |
 | L4 | Verifier/Critic | ✅ Done | Hallucination detection, guideline compliance, safety verification |
 | L5 | Memory & Profiling | ✅ Done | HIPAA-compliant patient profiles, conversation history, preferences |
 

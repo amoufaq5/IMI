@@ -125,13 +125,26 @@ The IMI (Intelligent Medical Interface) platform is a production-grade medical L
   - Immediate referral triggers
   - Severity scoring
 
+- `guardrails.py` - Input/Output pattern-matching guardrails (from Doc1 integration):
+  - `InputGuardrail` - Scans user text BEFORE rule engine or LLM:
+    - CRISIS patterns (suicide, self-harm) → full block, show crisis resources only
+    - EMERGENCY patterns (chest pain, stroke, OD) → prepend emergency banner
+    - SCOPE patterns (prescription requests, diagnosis) → block with explanation
+  - `OutputGuardrail` - Scans LLM output BEFORE returning to user:
+    - Softens overconfident language ("you definitely have" → "may be consistent with")
+    - Scrubs potential PHI (SSN, email, MRN patterns)
+    - Blocks if LLM generates crisis-related content
+  - `GuardrailSignal` enum: CRISIS, EMERGENCY, SCOPE_VIOLATION, PHI_DETECTED, OVERCONFIDENT
+
 - `service.py` - Orchestrates all rule components:
   - `assess_patient()` - Full safety assessment
   - `check_medication_safety()` - Drug safety check
   - `get_otc_recommendation()` - OTC eligibility
 
 **Integration:**
-- Called BEFORE LLM generates any response
+- InputGuardrail runs FIRST (< 5ms, regex-based)
+- Rule engine runs deterministic safety checks
+- OutputGuardrail runs on LLM output before Verifier
 - Can BLOCK requests that require immediate medical attention
 - Results passed to LLM as safety context
 - Logged for audit compliance
@@ -144,13 +157,16 @@ The IMI (Intelligent Medical Interface) platform is a production-grade medical L
 **Purpose:** Natural language generation, explanation, and synthesis. NEVER decides alone on safety.
 
 **Components:**
-- `meditron.py` - Meditron-70B model wrapper:
-  - Model loading with quantization (4-bit QLoRA, 8-bit)
-  - LoRA adapter management (r=32, alpha=64, 7 target modules)
-  - Parallel multi-GPU training support
-  - Text generation with safety guardrails
+- `meditron.py` - Mixtral 8x7B model wrapper (`MixtralMedicalModel`):
+  - Base: `mistralai/Mixtral-8x7B-Instruct-v0.1` (Apache 2.0)
+  - Architecture: Mixture of Experts (8 experts, 2 active per token, 32K context)
+  - 3-stage training: Foundation → DPO Safety Alignment → LoRA Adapters
+  - Model loading with QLoRA quantization (4-bit NF4, bfloat16)
+  - LoRA adapter management (r=32, alpha=64, targets: q,k,v,o_proj)
+  - Mixtral chat template: `<s>[INST] {system}\n\n{user} [/INST]`
+  - Optional vLLM backend for production inference (LoRA hot-swapping)
   - Streaming support
-  - Embedding generation
+  - Backward-compatible alias: `MeditronModel = MixtralMedicalModel`
 
 - `prompts.py` - Role-specific prompts:
   - `RoleType` enum: PATIENT, DOCTOR, STUDENT, RESEARCHER, PHARMA, HOSPITAL

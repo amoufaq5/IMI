@@ -2,10 +2,11 @@
 LoRA Training Pipeline for IMI Medical LLM
 
 Complete training pipeline using PEFT (Parameter-Efficient Fine-Tuning):
-- Loads Meditron base model
-- Configures LoRA adapters
-- Trains on domain-specific data
-- Saves adapters for inference
+- Loads Mixtral 8x7B base model (or foundation-tuned checkpoint)
+- Configures LoRA adapters with Mixtral MoE-aware target modules
+- Trains on domain-specific data with QLoRA 4-bit (NF4, bfloat16)
+- Supports parallel multi-GPU training (6×A100)
+- Saves adapters for vLLM hot-swap inference
 """
 import os
 import json
@@ -46,20 +47,20 @@ class AdapterTrainingConfig:
     """Configuration for adapter training"""
     name: str
     description: str
-    lora_r: int = 16
-    lora_alpha: int = 32
+    lora_r: int = 32
+    lora_alpha: int = 64
     lora_dropout: float = 0.05
     target_modules: List[str] = field(default_factory=lambda: [
         "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
     ])
     learning_rate: float = 1e-4
     num_epochs: int = 3
     batch_size: int = 2
-    gradient_accumulation_steps: int = 8
+    gradient_accumulation_steps: int = 16
     warmup_ratio: float = 0.03
     max_seq_length: int = 4096
     weight_decay: float = 0.01
+    packing: bool = False
 
 
 # Adapter configurations
@@ -71,6 +72,7 @@ ADAPTER_CONFIGS = {
         lora_alpha=64,
         learning_rate=1e-4,
         num_epochs=3,
+        max_seq_length=2048,
     ),
     "clinical_pharmacist": AdapterTrainingConfig(
         name="clinical_pharmacist",
@@ -85,8 +87,8 @@ ADAPTER_CONFIGS = {
         description="Clinical decision support for doctors",
         lora_r=32,
         lora_alpha=64,
-        learning_rate=5e-5,
-        num_epochs=4,
+        learning_rate=1e-4,
+        num_epochs=3,
     ),
     "education": AdapterTrainingConfig(
         name="education",
@@ -109,8 +111,8 @@ ADAPTER_CONFIGS = {
         description="Medical research and literature synthesis",
         lora_r=32,
         lora_alpha=64,
-        learning_rate=5e-5,
-        num_epochs=4,
+        learning_rate=1e-4,
+        num_epochs=3,
     ),
 }
 
@@ -189,7 +191,7 @@ class LoRATrainer:
     
     def __init__(
         self,
-        base_model_name: str = "epfl-llm/meditron-70b",
+        base_model_name: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
         use_4bit: bool = True,
         use_8bit: bool = False,
         gpu_id: Optional[int] = None,
@@ -210,7 +212,7 @@ class LoRATrainer:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_compute_dtype=torch.bfloat16,
                 bnb_4bit_use_double_quant=True,
             )
         elif self.use_8bit:
@@ -239,7 +241,7 @@ class LoRATrainer:
             quantization_config=bnb_config,
             device_map=device_map,
             trust_remote_code=True,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
         )
         
         # Prepare for training
@@ -360,11 +362,16 @@ class LoRATrainer:
             evaluation_strategy="steps" if val_dataset else "no",
             save_total_limit=3,
             load_best_model_at_end=True if val_dataset else False,
-            report_to="none",
-            fp16=True,
+            report_to="wandb",
+            fp16=False,
+            bf16=True,
             gradient_checkpointing=True,
-            optim="paged_adamw_8bit",
+            optim="paged_adamw_32bit",
             lr_scheduler_type="cosine",
+            max_grad_norm=0.3,
+            dataloader_num_workers=4,
+            group_by_length=True,
+            ddp_find_unused_parameters=False,
             metric_for_best_model="eval_loss" if val_dataset else None,
         )
         
@@ -423,8 +430,8 @@ def main():
     )
     parser.add_argument(
         "--base-model",
-        default="epfl-llm/meditron-70b",
-        help="Base model name or path",
+        default="mistralai/Mixtral-8x7B-Instruct-v0.1",
+        help="Base model name or path (default: Mixtral 8x7B)",
     )
     parser.add_argument(
         "--use-4bit",
@@ -476,50 +483,76 @@ def main():
     else:
         adapters = [args.adapter]
     
-    # ─── Parallel multi-GPU training ───────────────────────────────
+    # ─── Parallel multi-GPU training (wave-based) ──────────────────
+    # Mixtral 8x7B in 4-bit QLoRA needs ~52GB VRAM per training job.
+    # On A100 80GB, that means ONE adapter per GPU at a time.
+    # Strategy: run adapters in "waves" — N adapters in parallel
+    # (one per GPU), wait for wave to complete, then launch next wave.
     if args.parallel and len(adapters) > 1:
         import subprocess, sys
         num_gpus = torch.cuda.device_count()
         if num_gpus < 2:
             logger.warning("Only 1 GPU detected — falling back to sequential training")
         else:
-            logger.info(f"Launching parallel training across {num_gpus} GPUs for {len(adapters)} adapters")
-            processes = []
-            for idx, adapter_name in enumerate(adapters):
-                gpu_id = idx % num_gpus
-                cmd = [
-                    sys.executable, __file__,
-                    "--adapter", adapter_name,
-                    "--base-model", args.base_model,
-                    "--gpu", str(gpu_id),
-                ]
-                if args.use_8bit:
-                    cmd.append("--use-8bit")
-                if args.epochs:
-                    cmd.extend(["--epochs", str(args.epochs)])
-                if args.batch_size:
-                    cmd.extend(["--batch-size", str(args.batch_size)])
-                if args.learning_rate:
-                    cmd.extend(["--learning-rate", str(args.learning_rate)])
+            logger.info(f"Parallel training: {len(adapters)} adapters across {num_gpus} GPUs")
+            logger.info(f"Wave size: {num_gpus} (1 adapter per GPU, Mixtral needs ~52GB VRAM)")
+            
+            # Split adapters into waves of size num_gpus
+            waves = []
+            for i in range(0, len(adapters), num_gpus):
+                waves.append(adapters[i:i + num_gpus])
+            
+            logger.info(f"Scheduled {len(waves)} wave(s): {[w for w in waves]}")
+            
+            all_failed = []
+            for wave_idx, wave in enumerate(waves):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"WAVE {wave_idx + 1}/{len(waves)}: {wave}")
+                logger.info(f"{'='*60}")
                 
-                logger.info(f"  GPU {gpu_id} ← {adapter_name}")
-                env = os.environ.copy()
-                env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-                proc = subprocess.Popen(cmd, env=env)
-                processes.append((adapter_name, proc))
+                processes = []
+                for gpu_id, adapter_name in enumerate(wave):
+                    cmd = [
+                        sys.executable, __file__,
+                        "--adapter", adapter_name,
+                        "--base-model", args.base_model,
+                        "--gpu", str(gpu_id),
+                    ]
+                    if args.use_8bit:
+                        cmd.append("--use-8bit")
+                    if args.epochs:
+                        cmd.extend(["--epochs", str(args.epochs)])
+                    if args.batch_size:
+                        cmd.extend(["--batch-size", str(args.batch_size)])
+                    if args.learning_rate:
+                        cmd.extend(["--learning-rate", str(args.learning_rate)])
+                    
+                    logger.info(f"  GPU {gpu_id} ← {adapter_name}")
+                    env = os.environ.copy()
+                    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                    proc = subprocess.Popen(cmd, env=env)
+                    processes.append((adapter_name, gpu_id, proc))
+                
+                # Wait for this wave to complete before starting next
+                for adapter_name, gpu_id, proc in processes:
+                    rc = proc.wait()
+                    if rc != 0:
+                        all_failed.append(adapter_name)
+                        logger.error(f"  FAILED: {adapter_name} on GPU {gpu_id} (exit code {rc})")
+                    else:
+                        logger.info(f"  DONE: {adapter_name} on GPU {gpu_id}")
+                
+                logger.info(f"Wave {wave_idx + 1} complete.")
             
-            # Wait for all to finish
-            failed = []
-            for adapter_name, proc in processes:
-                rc = proc.wait()
-                if rc != 0:
-                    failed.append(adapter_name)
-                    logger.error(f"Training FAILED for {adapter_name} (exit code {rc})")
-                else:
-                    logger.info(f"Training COMPLETE for {adapter_name}")
+            # Summary
+            logger.info(f"\n{'='*60}")
+            logger.info(f"PARALLEL TRAINING SUMMARY")
+            logger.info(f"{'='*60}")
+            logger.info(f"Total adapters: {len(adapters)}")
+            logger.info(f"Succeeded: {len(adapters) - len(all_failed)}")
+            logger.info(f"Failed: {len(all_failed)} {all_failed if all_failed else ''}")
             
-            if failed:
-                logger.error(f"Failed adapters: {failed}")
+            if all_failed:
                 raise SystemExit(1)
             
             logger.info("All parallel training jobs completed successfully!")

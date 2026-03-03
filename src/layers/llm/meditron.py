@@ -1,8 +1,12 @@
 """
-Meditron Model Integration
+Mixtral 8x7B Model Integration
 
-Meditron is a medical LLM based on LLaMA, fine-tuned on medical data.
+Mixtral 8x7B is a Mixture-of-Experts LLM (Apache 2.0) used as IMI's base model.
+After medical foundation fine-tuning + DPO safety alignment, it serves as the
+core generation engine with 6 LoRA adapters hot-swapped per user type.
+
 This module handles model loading, inference, and medical-specific optimizations.
+Also supports vLLM inference backend for production deployment.
 """
 import torch
 from typing import Optional, List, Dict, Any, Generator
@@ -22,20 +26,25 @@ from src.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class MeditronModel:
+class MixtralMedicalModel:
     """
-    Meditron Medical Language Model
+    Mixtral 8x7B Medical Language Model
+    
+    Base: mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache 2.0)
+    Architecture: Mixture of Experts (8 experts, 2 active per token)
+    Context: 32K tokens
     
     Handles:
-    - Model loading with quantization (4-bit/8-bit)
-    - LoRA adapter loading for domain-specific fine-tuning
-    - Text generation with medical-specific parameters
+    - Model loading with QLoRA quantization (4-bit NF4)
+    - LoRA adapter loading/hot-swapping for 6 user types
+    - Text generation with Mixtral chat template
     - Streaming generation support
+    - Optional vLLM backend for production inference
     """
     
     DEFAULT_GENERATION_CONFIG = {
         "max_new_tokens": 1024,
-        "temperature": 0.7,
+        "temperature": 0.1,
         "top_p": 0.9,
         "top_k": 50,
         "repetition_penalty": 1.1,
@@ -44,12 +53,17 @@ class MeditronModel:
         "eos_token_id": None,
     }
     
+    # Mixtral chat template
+    CHAT_TEMPLATE = "<s>[INST] {system}\n\n{user} [/INST]"
+    
     def __init__(
         self,
         model_path: Optional[str] = None,
         device: Optional[str] = None,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
+        use_vllm: bool = False,
+        vllm_url: Optional[str] = None,
     ):
         self.model_path = model_path or settings.llm_model_path
         self.device = device or settings.llm_device
@@ -58,17 +72,37 @@ class MeditronModel:
         self.generation_config = None
         self.load_in_4bit = load_in_4bit
         self.load_in_8bit = load_in_8bit
+        self.use_vllm = use_vllm
+        self.vllm_url = vllm_url or "http://localhost:8080"
         self._loaded_adapters: Dict[str, bool] = {}
     
     def load(self) -> None:
         """Load the model and tokenizer"""
-        logger.info(f"Loading Meditron model from {self.model_path}")
+        if self.use_vllm:
+            logger.info(f"Using vLLM backend at {self.vllm_url}")
+            # Only load tokenizer locally; inference goes through vLLM API
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                padding_side="left",
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.generation_config = GenerationConfig(
+                **self.DEFAULT_GENERATION_CONFIG,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+            logger.info("vLLM backend ready (tokenizer loaded locally)")
+            return
+        
+        logger.info(f"Loading Mixtral 8x7B model from {self.model_path}")
         
         quantization_config = None
         if self.load_in_4bit:
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_compute_dtype=torch.bfloat16,
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_quant_type="nf4",
             )
@@ -88,7 +122,7 @@ class MeditronModel:
         
         model_kwargs = {
             "trust_remote_code": True,
-            "torch_dtype": torch.float16,
+            "torch_dtype": torch.bfloat16,
             "device_map": "auto" if self.device == "cuda" else None,
         }
         
@@ -106,7 +140,7 @@ class MeditronModel:
             eos_token_id=self.tokenizer.eos_token_id,
         )
         
-        logger.info("Meditron model loaded successfully")
+        logger.info("Mixtral 8x7B model loaded successfully")
     
     def load_adapter(self, adapter_path: str, adapter_name: str = "default") -> None:
         """Load a LoRA adapter for domain-specific fine-tuning"""

@@ -148,7 +148,7 @@ Patient: "I have chest pain and shortness of breath"
 ## Built for Scale & Safety
 
 ### Architecture
-- **Base Model**: Meditron-70B (medical-specific LLM)
+- **Base Model**: Meditron-7B (medical-specific LLM)
 - **Fine-tuning**: 6 LoRA adapters, parallel multi-GPU training (90% cost reduction)
 - **Knowledge**: Neo4j graph database
 - **Security**: AES-256-GCM encryption

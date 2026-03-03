@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     chromadb_collection: str = Field(default="medical_embeddings", description="Collection name")
     
     # LLM Configuration
-    llm_model_path: str = Field(default="/models/meditron-70b", description="LLM model path")
+    llm_model_path: str = Field(default="mistralai/Mixtral-8x7B-Instruct-v0.1", description="LLM model path")
     llm_device: str = Field(default="cuda", description="Device for LLM")
-    llm_max_length: int = Field(default=4096, description="Max sequence length")
+    llm_max_length: int = Field(default=32768, description="Max sequence length (Mixtral supports 32K)")
     llm_temperature: float = Field(default=0.7, description="Sampling temperature")
     llm_top_p: float = Field(default=0.9, description="Top-p sampling")
     

@@ -67,6 +67,18 @@ pytest-asyncio==0.23.3
 pytest-cov==4.1.0
 httpx==0.26.0
 
+# Data Collection
+gdown>=5.1.0
+pymupdf>=1.23.0
+
+# Training (Mixtral 8x7B pipeline)
+trl>=0.7.0
+datasets>=2.16.0
+wandb>=0.16.0
+
+# Inference
+vllm>=0.3.0
+
 # Utilities
 httpx==0.26.0
 aiofiles==23.2.1

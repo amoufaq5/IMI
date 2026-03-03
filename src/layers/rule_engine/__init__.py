@@ -4,6 +4,7 @@ from .triage import TriageEngine, TriageResult, TriageUrgency
 from .otc_eligibility import OTCEligibilityEngine, OTCDecision
 from .contraindication_checker import ContraindicationChecker
 from .red_flags import RedFlagDetector, RedFlag
+from .guardrails import InputGuardrail, OutputGuardrail, GuardrailResult, GuardrailSignal
 
 __all__ = [
     "RuleEngineService",
@@ -16,4 +17,8 @@ __all__ = [
     "ContraindicationChecker",
     "RedFlagDetector",
     "RedFlag",
+    "InputGuardrail",
+    "OutputGuardrail",
+    "GuardrailResult",
+    "GuardrailSignal",
 ]

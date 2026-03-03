@@ -168,7 +168,7 @@ def main():
     )
     parser.add_argument(
         "--base-model",
-        default="epfl-llm/meditron-70b",
+        default="mistralai/Mixtral-8x7B-Instruct-v0.1",
         help="Base model path or HuggingFace ID",
     )
     parser.add_argument(
