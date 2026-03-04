@@ -29,7 +29,7 @@ einops==0.7.0
 # Medical NLP
 spacy==3.7.2
 scispacy==0.5.3
-medspacy==1.1.2
+# medspacy==1.1.2  # Optional — install manually: pip install medspacy (has build issues on some platforms)
 
 # Image Processing (Medical Imaging)
 pillow==10.2.0

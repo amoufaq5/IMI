@@ -1,0 +1,32 @@
+# IMI Training Requirements (RunPod / Cloud GPU)
+# Use this instead of requirements.txt when you only need to train, not run the full app.
+#
+# Usage: pip install -r requirements-training.txt
+
+# LLM & ML (core training stack)
+torch>=2.1.0
+transformers>=4.36.0
+accelerate>=0.25.0
+peft>=0.7.0
+bitsandbytes>=0.42.0
+datasets>=2.16.0
+sentencepiece>=0.1.99
+safetensors>=0.4.0
+einops>=0.7.0
+
+# Training (Mixtral 8x7B pipeline)
+trl>=0.7.0
+wandb>=0.16.0
+
+# Inference (vLLM)
+vllm>=0.3.0
+
+# Data Collection
+gdown>=5.1.0
+pymupdf>=1.23.0
+
+# Utilities
+pyyaml>=6.0
+pandas>=2.0.0
+numpy>=1.24.0
+tqdm>=4.65.0
