@@ -653,7 +653,7 @@ Provide differential diagnosis and recommended workup."""
             output += f"\n**Related Topics:** {category.title()}, Differential Diagnosis"
 
         elif template["type"] == "management":
-            condition = patient["conditions"][0]["name"] if patient["conditions"] else "no significant medical history"
+            condition = patient["conditions"][0] if patient["conditions"] else "no significant medical history"
             correct_mgmt = random.choice(mgmt_options)
             other_mgmts = [m for m in mgmt_options if m != correct_mgmt]
             distractors = random.sample(other_mgmts, min(4, len(other_mgmts)))
