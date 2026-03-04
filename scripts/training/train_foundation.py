@@ -60,9 +60,9 @@ FOUNDATION_CONFIG = {
     ],
 
     # Training
-    "num_epochs": 2,
-    "batch_size": 2,
-    "gradient_accumulation_steps": 16,  # effective batch = 32
+    "num_epochs": 1,
+    "batch_size": 8,
+    "gradient_accumulation_steps": 4,   # effective batch = 32
     "learning_rate": 2e-4,
     "lr_scheduler_type": "cosine",
     "warmup_ratio": 0.03,
@@ -83,7 +83,7 @@ FOUNDATION_CONFIG = {
     "logging_steps": 50,
 
     # Monitoring
-    "report_to": "wandb",
+    "report_to": "none",
     "run_name": "imi-foundation-v1",
 }
 
