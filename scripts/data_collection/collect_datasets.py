@@ -1,14 +1,18 @@
-"""
-Medical Dataset Collection Script
+"""Medical Dataset Collection Script
 
 Downloads and prepares 40+ open medical datasets for Mixtral 8x7B fine-tuning.
 Organized by adapter type with quality ratings and license verification.
 
 Dataset sources:
-- HuggingFace Hub (primary) — uses direct URL downloads
+- HuggingFace Hub (primary) — uses `datasets` library for reliable downloads
+- Direct URLs (fallback) — for datasets not on HF Hub
 - Kaggle datasets (requires kaggle.json setup)
 
 All datasets are commercially licensed (MIT, Apache 2.0, CC BY, CC0, Public Domain).
+
+Usage:
+    pip install datasets   # required
+    python scripts/data_collection/collect_datasets.py
 """
 import os
 import json
@@ -17,10 +21,17 @@ import logging
 import requests
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from tqdm import tqdm
 import zipfile
 import tarfile
+
+try:
+    from datasets import load_dataset
+    HF_DATASETS_AVAILABLE = True
+except ImportError:
+    HF_DATASETS_AVAILABLE = False
+    logging.warning("HuggingFace `datasets` not installed. Run: pip install datasets")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,10 +44,13 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 class DatasetConfig:
     """Configuration for a dataset"""
     name: str
-    url: str
     description: str
-    format: str  # json, csv, zip, tar.gz
     adapter_type: str  # Which adapter this data is for
+    hf_id: Optional[str] = None  # HuggingFace dataset ID (e.g. "bigbio/med_qa")
+    hf_subset: Optional[str] = None  # HuggingFace subset/config name
+    hf_split: str = "train"  # Which split to download
+    url: Optional[str] = None  # Direct URL fallback
+    format: str = "json"  # json, jsonl, csv, zip, tar.gz
     processing_fn: Optional[str] = None
 
 
@@ -48,320 +62,152 @@ class DatasetConfig:
 
 DATASETS = [
     # ======================== SHARED FOUNDATION ========================
-    # These train ALL adapters — core medical knowledge
     DatasetConfig(
         name="medqa",
-        url="https://huggingface.co/datasets/bigbio/med_qa/resolve/main/data/US/train.jsonl",
+        hf_id="bigbio/med_qa",
+        hf_subset="med_qa_en_source",
         description="USMLE-style medical questions (12,723 Q) ★★★★★",
-        format="jsonl",
         adapter_type="education",
     ),
     DatasetConfig(
         name="medmcqa",
-        url="https://huggingface.co/datasets/medmcqa/resolve/main/data/train.json",
+        hf_id="openlifescienceai/medmcqa",
         description="Medical MCQs, 21 subjects (194,000 Q) ★★★★",
-        format="json",
         adapter_type="education",
     ),
     DatasetConfig(
         name="pubmedqa_labeled",
-        url="https://huggingface.co/datasets/pubmed_qa/resolve/main/pqa_labeled/train.json",
+        hf_id="qiaojin/PubMedQA",
+        hf_subset="pqa_labeled",
         description="PubMedQA evidence-based Q&A (1,000 Q) ★★★★★",
-        format="json",
         adapter_type="research",
     ),
     DatasetConfig(
         name="pubmedqa_artificial",
-        url="https://huggingface.co/datasets/qiaojin/PubMedQA/resolve/main/data/pqa_artificial/train.jsonl",
+        hf_id="qiaojin/PubMedQA",
+        hf_subset="pqa_artificial",
         description="PubMedQA artificial — large volume pretraining (211,269 Q) ★★★",
-        format="jsonl",
         adapter_type="research",
     ),
     DatasetConfig(
         name="headqa_en",
-        url="https://huggingface.co/datasets/dvilares/head_qa/resolve/main/data/en/train.json",
+        hf_id="dvilares/head_qa",
+        hf_subset="en",
         description="Spanish medical exams translated to English (6,750 Q) ★★★★",
-        format="json",
         adapter_type="education",
     ),
     DatasetConfig(
         name="medalpaca_medqa",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_medqa/resolve/main/medical_meadow_medqa.json",
+        hf_id="medalpaca/medical_meadow_medqa",
         description="USMLE + chain-of-thought reasoning (10,178 Q) ★★★★★",
-        format="json",
         adapter_type="education",
     ),
     DatasetConfig(
         name="medical_flashcards",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_medical_flashcards/resolve/main/medical_meadow_medical_flashcards.json",
+        hf_id="medalpaca/medical_meadow_medical_flashcards",
         description="High-yield medical flashcards (33,955 Q) ★★★★",
-        format="json",
         adapter_type="education",
     ),
     DatasetConfig(
         name="medical_instruction_100k",
-        url="https://huggingface.co/datasets/Mohammed-Altaf/medical-instruction-100k/resolve/main/train.json",
+        hf_id="Mohammed-Altaf/medical-instruction-100k",
         description="Broad medical instruction following (100,000 Q) ★★★",
-        format="json",
         adapter_type="education",
     ),
     DatasetConfig(
-        name="pubmed_qa_llm_training",
-        url="https://huggingface.co/datasets/toughdata/pubmed-qa-llm-training-dataset/resolve/main/train.json",
-        description="LLM-oriented PubMed Q&A (100,000 Q) ★★★",
-        format="json",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="biomedical_qa",
-        url="https://huggingface.co/datasets/Malikeh1375/medical-question-answering/resolve/main/train.json",
-        description="Curated biomedical question pairs (7,000 Q) ★★★★",
-        format="json",
+        name="sciq",
+        hf_id="allenai/sciq",
+        description="Science questions including biology/medicine (~12k) ★★★",
         adapter_type="research",
     ),
 
     # ======================== CLINICAL NOTES & TEXT ========================
     DatasetConfig(
-        name="mtsamples",
-        url="https://huggingface.co/datasets/rungalileo/medical_transcription_40/resolve/main/train.json",
-        description="Clinical notes — 40 specialties (3,000 notes) ★★★★★",
-        format="json",
-        adapter_type="clinical_decision",
-    ),
-    DatasetConfig(
         name="medical_meadow_wikidoc",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_wikidoc/resolve/main/medical_meadow_wikidoc.json",
+        hf_id="medalpaca/medical_meadow_wikidoc",
         description="Clinical reference articles — encyclopedic (67,704) ★★★★",
-        format="json",
         adapter_type="clinical_decision",
     ),
     DatasetConfig(
         name="wikidoc_patient_info",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_wikidoc_patient_information/resolve/main/medical_meadow_wikidoc_patient_information.json",
+        hf_id="medalpaca/medical_meadow_wikidoc_patient_information",
         description="Patient-facing explanations (5,942) ★★★★★",
-        format="json",
         adapter_type="patient_triage",
-    ),
-    DatasetConfig(
-        name="clinical_notes_medtext",
-        url="https://huggingface.co/datasets/BI55/MedText/resolve/main/train.json",
-        description="Annotated clinical text for NLP (5,000 notes) ★★★★",
-        format="json",
-        adapter_type="clinical_decision",
-    ),
-    DatasetConfig(
-        name="diseases_symptoms",
-        url="https://huggingface.co/datasets/Falah/Diseases_Symptoms/resolve/main/train.json",
-        description="Disease-symptom mapping (1,000 entries) ★★★",
-        format="json",
-        adapter_type="patient_triage",
-    ),
-    DatasetConfig(
-        name="symptom_to_diagnosis",
-        url="https://huggingface.co/datasets/gretelai/symptom_to_diagnosis/resolve/main/train.json",
-        description="Synthetic diagnostic reasoning (1,200) ★★★★",
-        format="json",
-        adapter_type="clinical_decision",
     ),
     DatasetConfig(
         name="medical_meadow_cord19",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_cord19/resolve/main/medical_meadow_cord19.json",
+        hf_id="medalpaca/medical_meadow_cord19",
         description="COVID-19 research papers Q&A (~1k) ★★★★",
-        format="json",
         adapter_type="research",
     ),
 
     # ======================== DOCTOR-SPECIFIC ========================
     DatasetConfig(
         name="chatdoctor_icliniq",
-        url="https://huggingface.co/datasets/lavita/ChatDoctor-iCliniq/resolve/main/train.json",
+        hf_id="lavita/ChatDoctor-iCliniq",
         description="Real doctor-patient clinical dialogues (11,000 Q) ★★★★★",
-        format="json",
         adapter_type="clinical_decision",
     ),
     DatasetConfig(
         name="healthcaremagic_100k",
-        url="https://huggingface.co/datasets/lavita/ChatDoctor-HealthCareMagic-100k/resolve/main/train.json",
+        hf_id="lavita/ChatDoctor-HealthCareMagic-100k",
         description="Doctor answers to patient queries (100,000 Q) ★★★★",
-        format="json",
         adapter_type="clinical_decision",
-    ),
-    DatasetConfig(
-        name="drugbank_community",
-        url="https://huggingface.co/datasets/pharmai/drugbank-community/resolve/main/train.json",
-        description="Drug mechanisms, interactions, dosing (10,000 drugs) ★★★★★",
-        format="json",
-        adapter_type="clinical_pharmacist",
     ),
 
     # ======================== PATIENT-SPECIFIC ========================
     DatasetConfig(
-        name="meddialog_en",
-        url="https://huggingface.co/datasets/UCSD-AI4H/Medical-Dialogue-System/resolve/main/english/train.json",
-        description="Patient-doctor online consultations (300,000 dialogs) ★★★★",
-        format="json",
-        adapter_type="patient_triage",
-    ),
-    DatasetConfig(
-        name="healthsearchqa",
-        url="https://huggingface.co/datasets/katielink/healthsearchqa/resolve/main/train.json",
-        description="Real consumer health search queries (3,173 Q) ★★★★★",
-        format="json",
-        adapter_type="patient_triage",
-    ),
-    DatasetConfig(
         name="medical_meadow_health_advice",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_health_advice/resolve/main/medical_meadow_health_advice.json",
+        hf_id="medalpaca/medical_meadow_health_advice",
         description="Patient health advice questions (10,178 Q) ★★★★",
-        format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="empathetic_dialogues",
-        url="https://huggingface.co/datasets/facebook/empathetic_dialogues/resolve/main/train.json",
+        hf_id="facebook/empathetic_dialogues",
         description="Empathy in conversation — tone training (25,000 dialogs) ★★★★",
-        format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="mental_health_counseling",
-        url="https://huggingface.co/datasets/Amod/mental_health_counseling_conversations/resolve/main/data/train.json",
+        hf_id="Amod/mental_health_counseling_conversations",
         description="Mental health counseling conversations (~3k) ★★★★",
-        format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="counsel_chat",
-        url="https://huggingface.co/datasets/nbertagnolli/counsel-chat/resolve/main/data/train.json",
+        hf_id="nbertagnolli/counsel-chat",
         description="Counseling chat conversations (~2k) ★★★",
-        format="json",
         adapter_type="patient_triage",
     ),
     DatasetConfig(
         name="medical_meadow_mediqa",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_mediqa/resolve/main/medical_meadow_mediqa.json",
+        hf_id="medalpaca/medical_meadow_mediqa",
         description="Consumer health Q&A (~2k) ★★★★",
-        format="json",
         adapter_type="patient_triage",
     ),
 
     # ======================== RESEARCH & LITERATURE ========================
     DatasetConfig(
-        name="pubmed_health_nq",
-        url="https://huggingface.co/datasets/gabeorlanski/pubmed-health-natural-questions/resolve/main/train.json",
-        description="Natural questions grounded in PubMed (100K Q) ★★★★",
-        format="json",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="cord19_metadata",
-        url="https://huggingface.co/datasets/allenai/cord19/resolve/main/metadata.json",
-        description="COVID + general medical research metadata (1M+ papers) ★★★★",
-        format="json",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="biomrc",
-        url="https://huggingface.co/datasets/bigbio/biomrc/resolve/main/data/biomrc_large_A/train.jsonl",
-        description="Reading comprehension on biomedical text (900K Q) ★★★",
-        format="jsonl",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="mqa_medical",
-        url="https://huggingface.co/datasets/bigbio/mqa/resolve/main/data/mqa_en/train.jsonl",
-        description="Medical QA benchmark — multiple sources (4,655 Q) ★★★★",
-        format="jsonl",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="mediqa_sum_2023",
-        url="https://huggingface.co/datasets/abachaa/mediqa-sum-2023/resolve/main/train.json",
-        description="Clinical dialogue summarization — gold standard (1,426 dialogs) ★★★★★",
-        format="json",
-        adapter_type="research",
-    ),
-    DatasetConfig(
-        name="sciq",
-        url="https://huggingface.co/datasets/allenai/sciq/resolve/main/data/train.json",
-        description="Science questions including biology/medicine (~12k) ★★★",
-        format="json",
-        adapter_type="research",
-    ),
-    DatasetConfig(
         name="medical_meadow_pubmed_causal",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_pubmed_causal/resolve/main/medical_meadow_pubmed_causal.json",
+        hf_id="medalpaca/medical_meadow_pubmed_causal",
         description="PubMed causal language modeling (~2.5M) ★★★",
-        format="json",
         adapter_type="research",
     ),
 
     # ======================== PHARMACIST / DRUG INFO ========================
     DatasetConfig(
-        name="drug_combo_extraction",
-        url="https://huggingface.co/datasets/allenai/drug-combo-extraction/resolve/main/data/train.jsonl",
-        description="Drug interactions from literature (800 abstracts) ★★★★",
-        format="jsonl",
-        adapter_type="clinical_pharmacist",
-    ),
-    DatasetConfig(
-        name="medication_qa",
-        url="https://huggingface.co/datasets/allenai/medication_qa/resolve/main/train.json",
-        description="Medication questions with validated answers (690 Q) ★★★★★",
-        format="json",
-        adapter_type="clinical_pharmacist",
-    ),
-    DatasetConfig(
-        name="drug_literature",
-        url="https://huggingface.co/datasets/pharmai/drug-literature/resolve/main/train.json",
-        description="Drug-focused literature abstracts (50,000) ★★★★",
-        format="json",
-        adapter_type="clinical_pharmacist",
-    ),
-
-    # ======================== HOSPITAL / CODING ========================
-    DatasetConfig(
-        name="icd10",
-        url="https://huggingface.co/datasets/icd10/ICD10/resolve/main/train.json",
-        description="Complete ICD-10 codes with descriptions (72,000) ★★★★★",
-        format="json",
-        adapter_type="clinical_decision",
-    ),
-    DatasetConfig(
-        name="clinical_trials",
-        url="https://huggingface.co/datasets/jungealexander/clinical_trials/resolve/main/train.json",
-        description="ClinicalTrials.gov structured data (400,000 trials) ★★★★",
-        format="json",
-        adapter_type="research",
+        name="medical_meadow_mmmlu",
+        hf_id="medalpaca/medical_meadow_mmmlu",
+        description="Multilingual medical MMLU (~3k) ★★★★",
+        adapter_type="education",
     ),
 
     # ======================== EDUCATION / USMLE ========================
     DatasetConfig(
         name="medquad",
-        url="https://huggingface.co/datasets/keivalya/MedQuad-MedicalQnADataset/resolve/main/train.json",
+        hf_id="keivalya/MedQuad-MedicalQnADataset",
         description="Medical Q&A from NIH websites (~16k) ★★★★",
-        format="json",
-        adapter_type="education",
-    ),
-    DatasetConfig(
-        name="medical_meadow_mmmlu",
-        url="https://huggingface.co/datasets/medalpaca/medical_meadow_mmmlu/resolve/main/medical_meadow_mmmlu.json",
-        description="Multilingual medical MMLU (~3k) ★★★★",
-        format="json",
-        adapter_type="education",
-    ),
-    DatasetConfig(
-        name="open_hermes_medical",
-        url="https://huggingface.co/datasets/lllucifer01/medical_data/resolve/main/train.json",
-        description="Mixed-source medical data (45,000 Q) ★★★",
-        format="json",
-        adapter_type="education",
-    ),
-    DatasetConfig(
-        name="medalpaca_medical_qa",
-        url="https://huggingface.co/datasets/lavita/medical-qa-shared-task-v1-toy/resolve/main/train.json",
-        description="Shared task validated Q&A (5,000 Q) ★★★★",
-        format="json",
         adapter_type="education",
     ),
 ]
@@ -414,60 +260,88 @@ class DatasetCollector:
             return False
     
     def download_dataset(self, config: DatasetConfig) -> Optional[Path]:
-        """Download a single dataset"""
+        """Download a single dataset via HF datasets library or direct URL"""
         logger.info(f"Downloading {config.name}: {config.description}")
         
-        # Determine file extension
-        ext = config.format
-        if ext == "jsonl":
-            ext = "jsonl"
-        elif ext == "json":
-            ext = "json"
-        
-        dest_path = self.raw_dir / f"{config.name}.{ext}"
+        dest_path = self.raw_dir / f"{config.name}.json"
         
         if dest_path.exists():
             logger.info(f"  Already exists: {dest_path}")
             return dest_path
         
-        success = self.download_file(config.url, dest_path, f"  {config.name}")
+        # Method 1: HuggingFace datasets library (preferred)
+        if config.hf_id and HF_DATASETS_AVAILABLE:
+            try:
+                logger.info(f"  Loading from HF: {config.hf_id} (subset={config.hf_subset}, split={config.hf_split})")
+                if config.hf_subset:
+                    ds = load_dataset(config.hf_id, config.hf_subset, split=config.hf_split, trust_remote_code=True)
+                else:
+                    ds = load_dataset(config.hf_id, split=config.hf_split, trust_remote_code=True)
+                
+                # Convert to list of dicts and save as JSON
+                data = [dict(row) for row in ds]
+                with open(dest_path, 'w') as f:
+                    json.dump(data, f)
+                logger.info(f"  Saved {len(data)} examples to {dest_path}")
+                return dest_path
+            except Exception as e:
+                logger.error(f"  HF datasets failed for {config.hf_id}: {e}")
+                # Fall through to URL method
         
-        if success:
-            logger.info(f"  Saved to: {dest_path}")
-            return dest_path
+        # Method 2: Direct URL download (fallback)
+        if config.url:
+            ext = config.format or "json"
+            url_dest = self.raw_dir / f"{config.name}.{ext}"
+            success = self.download_file(config.url, url_dest, f"  {config.name}")
+            if success:
+                logger.info(f"  Saved to: {url_dest}")
+                return url_dest
+        
+        logger.warning(f"  Could not download {config.name} — skipping")
         return None
     
+    def _load_json(self, raw_path: Path) -> List[Dict[str, Any]]:
+        """Load JSON file — handles both JSON array and JSONL formats"""
+        with open(raw_path, 'r') as f:
+            content = f.read().strip()
+        if content.startswith('['):
+            return json.loads(content)
+        else:
+            return [json.loads(line) for line in content.splitlines() if line.strip()]
+
     def process_medqa(self, raw_path: Path) -> List[Dict[str, Any]]:
         """Process MedQA dataset into instruction format"""
         processed = []
+        data = self._load_json(raw_path)
         
-        with open(raw_path, 'r') as f:
-            for line in f:
-                item = json.loads(line)
-                
-                # Build question with options
-                question = item.get('question', '')
-                options = item.get('options', {})
-                answer_idx = item.get('answer_idx', '')
-                
+        for item in data:
+            question = item.get('question', '')
+            options = item.get('options', {})
+            answer_idx = item.get('answer_idx', item.get('answer', ''))
+            
+            if isinstance(options, dict):
                 options_text = "\n".join([f"{k}. {v}" for k, v in options.items()])
-                
-                processed.append({
-                    "instruction": f"Answer this USMLE-style medical question:\n\n{question}\n\n{options_text}",
-                    "input": "",
-                    "output": f"The correct answer is {answer_idx}. {options.get(answer_idx, '')}",
-                    "source": "medqa",
-                    "adapter": "education",
-                })
+                answer_text = options.get(answer_idx, str(answer_idx))
+            elif isinstance(options, list):
+                options_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)])
+                answer_text = str(answer_idx)
+            else:
+                continue
+            
+            processed.append({
+                "instruction": f"Answer this USMLE-style medical question:\n\n{question}\n\n{options_text}",
+                "input": "",
+                "output": f"The correct answer is {answer_idx}. {answer_text}",
+                "source": "medqa",
+                "adapter": "education",
+            })
         
         return processed
     
     def process_medmcqa(self, raw_path: Path) -> List[Dict[str, Any]]:
         """Process MedMCQA dataset"""
         processed = []
-        
-        with open(raw_path, 'r') as f:
-            data = json.load(f)
+        data = self._load_json(raw_path)
         
         for item in data:
             question = item.get('question', '')
@@ -500,9 +374,7 @@ class DatasetCollector:
     def process_healthcaremagic(self, raw_path: Path) -> List[Dict[str, Any]]:
         """Process HealthCareMagic conversations"""
         processed = []
-        
-        with open(raw_path, 'r') as f:
-            data = json.load(f)
+        data = self._load_json(raw_path)
         
         for item in data:
             instruction = item.get('instruction', item.get('input', ''))
@@ -522,11 +394,14 @@ class DatasetCollector:
     def process_pubmedqa(self, raw_path: Path) -> List[Dict[str, Any]]:
         """Process PubMedQA dataset"""
         processed = []
+        data = self._load_json(raw_path)
         
-        with open(raw_path, 'r') as f:
-            data = json.load(f)
-        
-        for key, item in data.items():
+        # Handle both dict format {id: {...}} and list format [{...}]
+        if isinstance(data, dict):
+            items = data.values()
+        else:
+            items = data
+        for item in items:
             question = item.get('QUESTION', '')
             context = " ".join(item.get('CONTEXTS', []))
             answer = item.get('final_decision', '')
@@ -549,9 +424,7 @@ class DatasetCollector:
     def process_generic(self, raw_path: Path, adapter: str) -> List[Dict[str, Any]]:
         """Generic processor for instruction-format datasets"""
         processed = []
-        
-        with open(raw_path, 'r') as f:
-            data = json.load(f)
+        data = self._load_json(raw_path)
         
         if isinstance(data, list):
             for item in data:
