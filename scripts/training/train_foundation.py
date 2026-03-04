@@ -31,7 +31,7 @@ from transformers import (
     TrainingArguments,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer
 from datasets import Dataset, load_dataset, concatenate_datasets
 
 logging.basicConfig(level=logging.INFO)
@@ -244,8 +244,13 @@ def train_foundation(
     total = sum(p.numel() for p in model.parameters())
     logger.info(f"Trainable parameters: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
 
+    # Ensure tokenizer truncates to max_seq_length
+    tokenizer.model_max_length = config["max_seq_length"]
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     # Training arguments
-    training_args = SFTConfig(
+    training_args = TrainingArguments(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
         per_device_train_batch_size=config["batch_size"],
@@ -264,7 +269,7 @@ def train_foundation(
         report_to=config["report_to"],
         run_name=config["run_name"],
         dataloader_num_workers=4,
-        group_by_length=not config["packing"],  # Incompatible with packing
+        group_by_length=True,
         gradient_checkpointing=True,
         ddp_find_unused_parameters=False,
     )
@@ -274,10 +279,7 @@ def train_foundation(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer,
-        max_seq_length=config["max_seq_length"],
-        packing=config["packing"],
-        dataset_text_field="text",
+        tokenizer=tokenizer,
     )
 
     # Train
