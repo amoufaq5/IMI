@@ -267,9 +267,6 @@ def train_foundation(
         group_by_length=not config["packing"],  # Incompatible with packing
         gradient_checkpointing=True,
         ddp_find_unused_parameters=False,
-        max_seq_length=config["max_seq_length"],
-        packing=config["packing"],
-        dataset_text_field="text",
     )
 
     # SFT Trainer
@@ -278,6 +275,9 @@ def train_foundation(
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
+        max_seq_length=config["max_seq_length"],
+        packing=config["packing"],
+        dataset_text_field="text",
     )
 
     # Train
