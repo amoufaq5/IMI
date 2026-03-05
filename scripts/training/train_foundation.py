@@ -1,21 +1,21 @@
 """
-Foundation Training for IMI Medical LLM — Full Fine-Tuning on H100
+Foundation Training for IMI Medical LLM — QLoRA on 2×H100
 
-Full-parameter fine-tuning of Mixtral 8x7B on combined medical datasets.
-Optimized for NVIDIA H100 80GB GPUs with maximum throughput.
+Parameter-efficient fine-tuning of Mixtral 8x7B on combined medical datasets
+using QLoRA (4-bit quantization + LoRA adapters).
+Configured for 2× NVIDIA H100 80GB GPUs.
 
 Training pipeline:
   Foundation Training (this script) ← you are here
   → DPO Safety Alignment (train_dpo.py)
 
 Key design decisions:
-- FULL fine-tuning (no LoRA/QLoRA) — maximizes model capacity on H100
-- BFloat16 precision — native H100 support, no quantization overhead
-- Multi-GPU with DeepSpeed ZeRO Stage 3 or FSDP for memory efficiency
+- QLoRA — 4-bit NF4 quantization + LoRA adapters for memory efficiency
+- BFloat16 compute — native H100 support
+- 2×H100 multi-GPU via DDP
 - Flash Attention 2 for faster training
-- Gradient checkpointing for memory-efficient full parameter training
+- Gradient checkpointing for memory efficiency
 - Sequence packing enabled for throughput maximization
-- All model parameters trainable — no frozen layers
 """
 import os
 import json
@@ -28,8 +28,10 @@ import torch
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    BitsAndBytesConfig,
     TrainingArguments,
 )
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer
 from datasets import Dataset
 
@@ -42,42 +44,52 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 
 # ============================================================================
-# H100 FULL FINE-TUNING CONFIG — Maximum utilization
+# 2×H100 QLoRA CONFIG
 # ============================================================================
 
-H100_FULL_FT_CONFIG = {
+H100_QLORA_CONFIG = {
     # Model
     "base_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
 
-    # Training — full fine-tuning, all parameters
+    # QLoRA parameters
+    "lora_r": 64,
+    "lora_alpha": 128,
+    "lora_dropout": 0.05,
+    "lora_target_modules": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ],
+
+    # Quantization
+    "load_in_4bit": True,
+    "bnb_4bit_quant_type": "nf4",
+    "bnb_4bit_compute_dtype": "bfloat16",
+    "bnb_4bit_use_double_quant": True,
+
+    # Training
     "num_epochs": 2,
     "per_device_batch_size": 4,
-    "gradient_accumulation_steps": 8,   # effective batch = 4 * 8 * num_gpus
-    "learning_rate": 2e-5,              # Lower LR for full fine-tuning
+    "gradient_accumulation_steps": 4,   # effective batch = 4 * 4 * 2 GPUs = 32
+    "learning_rate": 2e-4,              # Higher LR typical for LoRA
     "lr_scheduler_type": "cosine",
     "warmup_ratio": 0.05,
     "max_grad_norm": 1.0,
     "max_seq_length": 4096,
-    "packing": True,                    # Pack short sequences for efficiency
+    "packing": True,
     "weight_decay": 0.01,
 
-    # Precision — BFloat16 (native H100 support)
+    # Precision
     "bf16": True,
     "fp16": False,
-    "tf32": True,                       # Enable TF32 for matmul on H100
+    "tf32": True,
 
-    # Optimizer — AdamW with fused kernels
-    "optim": "adamw_torch_fused",
+    # Optimizer
+    "optim": "paged_adamw_8bit",
 
     # Memory optimization
-    "gradient_checkpointing": True,     # Trade compute for memory
-    "dataloader_num_workers": 8,
+    "gradient_checkpointing": True,
+    "dataloader_num_workers": 4,
     "dataloader_pin_memory": True,
-
-    # DeepSpeed / FSDP (for multi-GPU)
-    # When using multiple H100s, enable DeepSpeed ZeRO-3:
-    #   deepspeed --num_gpus=8 train_foundation.py --deepspeed ds_config.json
-    # For single H100, the config below works directly.
 
     # Saving
     "save_steps": 200,
@@ -86,7 +98,7 @@ H100_FULL_FT_CONFIG = {
 
     # Monitoring
     "report_to": "none",
-    "run_name": "imi-foundation-h100-full-ft",
+    "run_name": "imi-foundation-2xh100-qlora",
 }
 
 
@@ -190,8 +202,8 @@ def train_foundation(
     resume_from: Optional[str] = None,
     config_overrides: Optional[Dict[str, Any]] = None,
 ):
-    """Run full fine-tuning on H100 — no LoRA, all parameters trainable"""
-    config = dict(H100_FULL_FT_CONFIG)
+    """Run QLoRA fine-tuning on 2×H100"""
+    config = dict(H100_QLORA_CONFIG)
     if config_overrides:
         config.update(config_overrides)
 
@@ -200,13 +212,13 @@ def train_foundation(
     output_path = output_dir or str(MODELS_DIR / "foundation")
 
     logger.info("=" * 60)
-    logger.info("IMI Foundation Training — H100 Full Fine-Tuning")
+    logger.info("IMI Foundation Training — 2×H100 QLoRA")
     logger.info("=" * 60)
     logger.info(f"Base model:         {base_model}")
     logger.info(f"Data dir:           {data_path}")
     logger.info(f"Output:             {output_path}")
-    logger.info(f"Training mode:      FULL FINE-TUNING (all parameters)")
-    logger.info(f"Precision:          BFloat16 (H100 native)")
+    logger.info(f"Training mode:      QLoRA (4-bit NF4 + LoRA r={config['lora_r']})")
+    logger.info(f"Precision:          BFloat16 compute, 4-bit NF4 storage")
     logger.info(f"Epochs:             {config['num_epochs']}")
     logger.info(f"Per-device batch:   {config['per_device_batch_size']}")
     logger.info(f"Grad accumulation:  {config['gradient_accumulation_steps']}")
@@ -224,7 +236,7 @@ def train_foundation(
         gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         logger.info(f"GPU:                {gpu_count}x {gpu_name} ({gpu_mem:.0f}GB)")
     else:
-        logger.warning("No CUDA GPU detected! Full fine-tuning requires GPU.")
+        logger.warning("No CUDA GPU detected! Training requires GPU.")
 
     # Enable TF32 for H100 matmul acceleration
     if config.get("tf32", True):
@@ -245,27 +257,52 @@ def train_foundation(
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.model_max_length = config["max_seq_length"]
 
-    # Load model — FULL precision, no quantization
-    logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
+    # 4-bit quantization config
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type=config["bnb_4bit_quant_type"],
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=config["bnb_4bit_use_double_quant"],
+    )
+
+    # Load model with 4-bit quantization
+    logger.info("Loading model with 4-bit NF4 quantization...")
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
+        quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",  # Flash Attention 2 for H100
+        attn_implementation="flash_attention_2",
     )
 
-    # Enable gradient checkpointing for memory efficiency
+    # Prepare model for QLoRA training
+    model = prepare_model_for_kbit_training(model)
+
+    # LoRA config
+    lora_config = LoraConfig(
+        r=config["lora_r"],
+        lora_alpha=config["lora_alpha"],
+        lora_dropout=config["lora_dropout"],
+        target_modules=config["lora_target_modules"],
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    model = get_peft_model(model, lora_config)
+
+    # Enable gradient checkpointing
     if config["gradient_checkpointing"]:
         model.gradient_checkpointing_enable()
 
-    # Print parameter count — ALL parameters are trainable
+    # Print parameter count
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    trainable_pct = 100 * trainable_params / total_params
     logger.info(f"Total parameters:     {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,} (100% — full fine-tuning)")
+    logger.info(f"Trainable parameters: {trainable_params:,} ({trainable_pct:.2f}% — LoRA adapters)")
 
-    # Training arguments — optimized for H100
+    # Training arguments
     training_args = TrainingArguments(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
@@ -290,7 +327,6 @@ def train_foundation(
         group_by_length=True,
         gradient_checkpointing=config["gradient_checkpointing"],
         ddp_find_unused_parameters=False,
-        torch_compile=True,  # Use torch.compile for H100 optimization
     )
 
     # SFT Trainer
@@ -299,37 +335,41 @@ def train_foundation(
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
+        peft_config=lora_config,
     )
 
     # Train
-    logger.info("Starting full fine-tuning on H100...")
+    logger.info("Starting QLoRA fine-tuning on 2×H100...")
     if resume_from:
         logger.info(f"Resuming from checkpoint: {resume_from}")
         trainer.train(resume_from_checkpoint=resume_from)
     else:
         trainer.train()
 
-    # Save
-    logger.info(f"Saving foundation model to {output_path}")
+    # Save LoRA adapters
+    logger.info(f"Saving LoRA adapters to {output_path}")
     trainer.save_model(output_path)
     tokenizer.save_pretrained(output_path)
 
     # Save metadata
     metadata = {
-        "training_type": "full_fine_tuning",
-        "training_hardware": "H100",
+        "training_type": "qlora",
+        "training_hardware": "2xH100",
         "base_model": base_model,
         "num_examples": len(dataset),
         "config": config,
         "total_parameters": total_params,
         "trainable_parameters": trainable_params,
-        "precision": "bfloat16",
+        "trainable_pct": trainable_pct,
+        "precision": "4bit_nf4_compute_bf16",
+        "lora_r": config["lora_r"],
+        "lora_alpha": config["lora_alpha"],
     }
     with open(Path(output_path) / "foundation_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
     logger.info("=" * 60)
-    logger.info("Foundation training complete! (Full fine-tuning on H100)")
+    logger.info("Foundation training complete! (QLoRA on 2×H100)")
     logger.info(f"Next step: python scripts/training/train_dpo.py train --foundation-path {output_path}")
     logger.info("=" * 60)
 
@@ -337,7 +377,7 @@ def train_foundation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Foundation Training — H100 Full Fine-Tuning")
+    parser = argparse.ArgumentParser(description="Foundation Training — 2×H100 QLoRA")
     parser.add_argument("--base-model", default=None, help="Base model path (default: Mixtral 8x7B)")
     parser.add_argument("--data-dir", default=None, help="Data directory")
     parser.add_argument("--output-dir", default=None, help="Output directory")
@@ -347,6 +387,7 @@ def main():
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--batch-size", type=int, default=None, help="Override per-device batch size")
     parser.add_argument("--no-packing", action="store_true", help="Disable sequence packing")
+    parser.add_argument("--lora-r", type=int, default=None, help="Override LoRA rank")
     parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config JSON")
 
     args = parser.parse_args()
@@ -360,6 +401,8 @@ def main():
         overrides["per_device_batch_size"] = args.batch_size
     if args.no_packing:
         overrides["packing"] = False
+    if args.lora_r:
+        overrides["lora_r"] = args.lora_r
 
     train_foundation(
         base_model=args.base_model,
