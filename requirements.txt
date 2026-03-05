@@ -16,15 +16,15 @@ redis==5.0.1
 neo4j==5.16.0
 
 # LLM & ML
-torch==2.1.2
-transformers==4.36.2
-accelerate==0.25.0
-peft==0.7.1
-bitsandbytes==0.42.0
-datasets==2.16.1
-sentencepiece==0.1.99
-safetensors==0.4.1
-einops==0.7.0
+torch>=2.1.2
+transformers>=4.40.0
+accelerate>=0.28.0
+peft>=0.7.1
+bitsandbytes>=0.42.0
+datasets>=2.16.1
+sentencepiece>=0.1.99
+safetensors>=0.4.1
+einops>=0.7.0
 
 # Medical NLP
 spacy==3.7.2
