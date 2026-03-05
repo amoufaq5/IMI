@@ -49,39 +49,35 @@ H100_FULL_FT_CONFIG = {
     # Model
     "base_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
 
-    # Training — full fine-tuning, all parameters
-    "num_epochs": 2,
-    "per_device_batch_size": 4,
-    "gradient_accumulation_steps": 8,   # effective batch = 4 * 8 * num_gpus
-    "learning_rate": 2e-5,              # Lower LR for full fine-tuning
+    # Training — H100 optimized
+    "num_epochs": 1,
+    "batch_size": 16,                   # Increased for H100 80GB
+    "gradient_accumulation_steps": 2,   # effective batch = 32
+    "learning_rate": 2e-4,
     "lr_scheduler_type": "cosine",
-    "warmup_ratio": 0.05,
-    "max_grad_norm": 1.0,
-    "max_seq_length": 4096,
-    "packing": True,                    # Pack short sequences for efficiency
-    "weight_decay": 0.01,
+    "warmup_ratio": 0.03,
+    "max_grad_norm": 0.3,
+    "max_seq_length": 2048,             # Reduced from 4096 for 2-3× speedup
+    "packing": True,
 
-    # Precision — BFloat16 (native H100 support)
+    # Precision — H100 native
     "bf16": True,
     "fp16": False,
-    "tf32": True,                       # Enable TF32 for matmul on H100
+    "tf32": True,                       # H100 Tensor Cores
 
-    # Optimizer — AdamW with fused kernels
+    # Optimizer — fused kernels for speed
     "optim": "adamw_torch_fused",
 
-    # Memory optimization
-    "gradient_checkpointing": True,     # Trade compute for memory
-    "dataloader_num_workers": 8,
+    # Memory & Speed optimization
+    "gradient_checkpointing": False,    # Disabled on H100 — use full memory for speed
+    "dataloader_num_workers": 8,        # Parallel data loading
     "dataloader_pin_memory": True,
-
-    # DeepSpeed / FSDP (for multi-GPU)
-    # When using multiple H100s, enable DeepSpeed ZeRO-3:
-    #   deepspeed --num_gpus=8 train_foundation.py --deepspeed ds_config.json
-    # For single H100, the config below works directly.
+    "dataloader_prefetch_factor": 2,
+    "torch_compile": True,               # PyTorch 2.0 compiler
 
     # Saving
-    "save_steps": 200,
-    "save_total_limit": 3,
+    "save_steps": 1000,                  # Less frequent saves = faster
+    "save_total_limit": 2,
     "logging_steps": 25,
 
     # Monitoring
@@ -208,9 +204,9 @@ def train_foundation(
     logger.info(f"Training mode:      FULL FINE-TUNING (all parameters)")
     logger.info(f"Precision:          BFloat16 (H100 native)")
     logger.info(f"Epochs:             {config['num_epochs']}")
-    logger.info(f"Per-device batch:   {config['per_device_batch_size']}")
+    logger.info(f"Per-device batch:   {config['batch_size']}")
     logger.info(f"Grad accumulation:  {config['gradient_accumulation_steps']}")
-    logger.info(f"Effective batch:    {config['per_device_batch_size'] * config['gradient_accumulation_steps']} × num_gpus")
+    logger.info(f"Effective batch:    {config['batch_size'] * config['gradient_accumulation_steps']} × num_gpus")
     logger.info(f"Learning rate:      {config['learning_rate']}")
     logger.info(f"Seq length:         {config['max_seq_length']}")
     logger.info(f"Packing:            {config['packing']}")
@@ -269,28 +265,29 @@ def train_foundation(
     training_args = TrainingArguments(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
-        per_device_train_batch_size=config["per_device_batch_size"],
+        per_device_train_batch_size=config["batch_size"],
         gradient_accumulation_steps=config["gradient_accumulation_steps"],
         learning_rate=config["learning_rate"],
         lr_scheduler_type=config["lr_scheduler_type"],
         warmup_ratio=config["warmup_ratio"],
         max_grad_norm=config["max_grad_norm"],
-        weight_decay=config["weight_decay"],
         optim=config["optim"],
         fp16=config["fp16"],
         bf16=config["bf16"],
+        tf32=config.get("tf32", True),
         logging_steps=config["logging_steps"],
         save_strategy="steps",
         save_steps=config["save_steps"],
         save_total_limit=config["save_total_limit"],
         report_to=config["report_to"],
         run_name=config["run_name"],
-        dataloader_num_workers=config["dataloader_num_workers"],
+        dataloader_num_workers=config.get("dataloader_num_workers", 8),
         dataloader_pin_memory=config.get("dataloader_pin_memory", True),
+        dataloader_prefetch_factor=config.get("dataloader_prefetch_factor", 2),
         group_by_length=True,
-        gradient_checkpointing=config["gradient_checkpointing"],
+        gradient_checkpointing=config.get("gradient_checkpointing", False),
         ddp_find_unused_parameters=False,
-        torch_compile=True,  # Use torch.compile for H100 optimization
+        torch_compile=config.get("torch_compile", True),
     )
 
     # SFT Trainer
