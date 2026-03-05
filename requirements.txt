@@ -17,7 +17,7 @@ neo4j>=5.16.0
 
 # LLM & ML
 torch>=2.2.0
-transformers>=4.46.0
+transformers>=4.56.0,<5
 accelerate>=0.34.0
 peft>=0.13.0
 bitsandbytes>=0.44.0
