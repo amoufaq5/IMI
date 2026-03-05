@@ -57,15 +57,12 @@ opentelemetry-instrumentation-fastapi==0.43b0
 # LangGraph & RAG
 langgraph>=0.0.40
 langchain>=0.1.0
-chromadb>=0.4.0
-sentence-transformers>=2.2.0
 shap>=0.44.0
 
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
-httpx==0.26.0
 
 # Data Collection
 gdown>=5.1.0
@@ -73,8 +70,9 @@ pymupdf>=1.23.0
 
 # Training (Mixtral 8x7B pipeline)
 trl>=0.7.0
-datasets>=2.16.0
 wandb>=0.16.0
+flash-attn>=2.5.0
+deepspeed>=0.12.0
 
 # Inference
 vllm>=0.3.0
@@ -88,3 +86,4 @@ pyyaml==6.0.1
 jinja2==3.1.3
 pandas==2.1.4
 numpy==1.26.3
+tqdm>=4.65.0
