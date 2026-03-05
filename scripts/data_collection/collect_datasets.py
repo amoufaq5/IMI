@@ -6,8 +6,8 @@ Organized by adapter type with quality ratings and license verification.
 Dataset sources:
 - HuggingFace Hub (primary) — uses `datasets` library for reliable downloads
 - Direct URLs (fallback) — for datasets not on HF Hub
-- Kaggle datasets (requires kaggle.json setup)
 
+All datasets are open-access and require NO credentials or API keys.
 All datasets are commercially licensed (MIT, Apache 2.0, CC BY, CC0, Public Domain).
 
 Usage:
@@ -158,21 +158,6 @@ DATASETS = [
                   description="Drug information instruction data (53K) ★★★", adapter_type="clinical_pharmacist"),
     DatasetConfig(name="medicine_review", hf_id="Shivani-3112/medicine-review",
                   description="Medicine reviews with side effects (161K) ★★★", adapter_type="clinical_pharmacist"),
-]
-
-
-# ============================================================================
-# KAGGLE DATASETS — require kaggle.json setup
-# ============================================================================
-
-KAGGLE_DATASETS = [
-    {"name": "medicaltranscriptions", "kaggle_id": "tboyle10/medicaltranscriptions", "adapter": "clinical_decision", "desc": "MTSamples original (5,000 notes) ★★★★★"},
-    {"name": "disease_symptoms_profile", "kaggle_id": "uom190346a/disease-symptoms-and-patient-profile-dataset", "adapter": "patient_triage", "desc": "Structured symptom-disease mapping (300K rows) ★★★"},
-    {"name": "disease_symptom_description", "kaggle_id": "itachi9604/disease-symptom-description-dataset", "adapter": "patient_triage", "desc": "Disease descriptions with symptoms (40 diseases) ★★★"},
-    {"name": "clinical_trial_outcomes", "kaggle_id": "adityamishra1/clinical-trial-outcomes-prediction", "adapter": "research", "desc": "Trial design + outcome prediction ★★★★"},
-    {"name": "drug_side_effects", "kaggle_id": "rohansingh0805/drug-side-effects", "adapter": "clinical_pharmacist", "desc": "Drug ADR data (5,000 entries) ★★★"},
-    {"name": "medical_qa_kaggle", "kaggle_id": "andrewmvd/medical-question-and-answer-data", "adapter": "patient_triage", "desc": "General medical Q&A (2,000 Q) ★★★"},
-    {"name": "indian_liver_patient", "kaggle_id": "abisheksudarshan/indian-liver-patient", "adapter": "clinical_decision", "desc": "Structured clinical data with outcomes ★★★"},
 ]
 
 

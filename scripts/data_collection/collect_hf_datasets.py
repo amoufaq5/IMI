@@ -1,12 +1,12 @@
 """
-Comprehensive Medical Dataset Downloader
+Comprehensive Medical Dataset Downloader — Open & Verified Sources Only
 
-Downloads 100+ open-source medical datasets from:
-  - HuggingFace Hub (via `datasets` library)
-  - GitHub repositories (direct URL)
-  - NIH / NLM / FDA public data (direct URL)
-  - Kaggle (via kaggle API)
-  - Academic open-access sources (direct URL)
+Downloads open-source medical datasets from verified, credential-free sources:
+  - HuggingFace Hub (via `datasets` library) — NO login required
+  - GitHub repositories (direct URL) — public repos only
+  - US Government open data (CDC, CMS) — NO API keys required
+
+NO credentials, API keys, or accounts needed. All sources are publicly accessible.
 
 Usage:
     pip install datasets requests
@@ -124,8 +124,13 @@ HF_DATASETS = [
 # ============================================================================
 
 URL_DATASETS = [
+    # ==========================================================================
+    # VERIFIED OPEN SOURCES — No credentials, API keys, or registration required.
+    # All URLs are publicly accessible GitHub raw files, CDC/CMS open data, or
+    # academic open-access repositories.
+    # ==========================================================================
 
-    # ====================== GITHUB — Medical NLP ======================
+    # ====================== GITHUB — Medical NLP (public repos) ===============
     ("mtsamples_transcriptions",
      "https://raw.githubusercontent.com/salgadev/medical-nlp/master/mtsamples.csv",
      "csv", "clinical_decision", "5K", "MTSamples medical transcriptions — 40 specialties"),
@@ -142,41 +147,7 @@ URL_DATASETS = [
      "https://raw.githubusercontent.com/ncbi-nlp/MedCalc-Bench/main/dataset/test_set.csv",
      "csv", "education", "1K", "MedCalc-Bench medical calculator test set"),
 
-    # ====================== NIH / NLM / FDA ======================
-    ("fda_drug_labels",
-     "https://api.fda.gov/download.json",
-     "fda_index", "clinical_pharmacist", "250K", "FDA OpenFDA drug labeling data (index)"),
-
-    ("dailymed_rxterms",
-     "https://lhncbc.nlm.nih.gov/RxTerms/RxTerms202401.zip",
-     "zip_csv", "clinical_pharmacist", "30K", "NLM RxTerms drug terminology 2024"),
-
-    ("sider_drug_side_effects",
-     "http://sideeffects.embl.de/media/download/meddra_all_se.tsv.gz",
-     "tsv_gz", "clinical_pharmacist", "310K", "SIDER drug side effects database"),
-
-    ("sider_drug_indications",
-     "http://sideeffects.embl.de/media/download/meddra_all_indications.tsv.gz",
-     "tsv_gz", "clinical_pharmacist", "100K", "SIDER drug indications database"),
-
-    # ====================== ACADEMIC — BioNLP ======================
-    ("ddi_drugbank_train",
-     "https://raw.githubusercontent.com/isegura/DDICorpus/master/DDICorpusBrat/Train/DrugBank/",
-     "skip", "clinical_pharmacist", "5K", "DDI Corpus drug-drug interactions (needs manual DL)"),
-
-    ("cord19_metadata",
-     "https://ai2-semanticscholar-cord-19.s3-us-west-2.amazonaws.com/latest/metadata.csv",
-     "csv", "research", "1M", "CORD-19 COVID research papers metadata"),
-
-    ("disease_symptom_knowledge",
-     "https://people.dbmi.columbia.edu/~friedma/Projects/DisesaceSympTxt/disease_symptom.json",
-     "json", "patient_triage", "150", "Columbia disease-symptom knowledge base"),
-
-    # ====================== KAGGLE (direct download links) ======================
-    ("drug_side_effects_kaggle",
-     "https://raw.githubusercontent.com/dsouzadyn/drugReviews/master/drugsComTrain_raw.tsv",
-     "tsv", "clinical_pharmacist", "161K", "UCI Drug Reviews for conditions + side effects"),
-
+    # ====================== GITHUB — Symptom/Disease Datasets =================
     ("symptom_disease_dataset",
      "https://raw.githubusercontent.com/itachi9604/healthcare-chatbot/master/Training.csv",
      "csv", "patient_triage", "5K", "Symptom to disease prediction dataset"),
@@ -193,23 +164,38 @@ URL_DATASETS = [
      "https://raw.githubusercontent.com/itachi9604/healthcare-chatbot/master/symptom_precaution.csv",
      "csv", "patient_triage", "40", "Symptom precaution advice"),
 
+    # ====================== GITHUB — Medical Dialogues ========================
     ("medical_dialog_en",
      "https://raw.githubusercontent.com/UCSD-AI4H/Medical-Dialogue-System/master/English/english_data.json",
      "json", "clinical_decision", "230K", "UCSD English medical dialogue system"),
 
-    # ====================== OPEN MEDICAL RESOURCES ======================
+    ("medical_dialog_processed",
+     "https://raw.githubusercontent.com/UCSD-AI4H/Medical-Dialogue-System/master/English/medical_data_clean.json",
+     "json", "clinical_decision", "230K", "UCSD Medical Dialogue cleaned English"),
+
+    ("mts_dialog_clinical_notes",
+     "https://raw.githubusercontent.com/abachaa/MTS-Dialog/main/Main-Dataset/MTS-Dialog-TrainingSet.csv",
+     "csv", "clinical_decision", "1.2K", "Medical dialogue to clinical note generation"),
+
+    ("mts_dialog_test",
+     "https://raw.githubusercontent.com/abachaa/MTS-Dialog/main/Main-Dataset/MTS-Dialog-TestSet-1-MEDIQA-Chat-2023.csv",
+     "csv", "clinical_decision", "200", "MTS-Dialog test set (MEDIQA-Chat 2023)"),
+
+    # ====================== GITHUB — Drug Reviews (public) ====================
+    ("drug_side_effects_reviews",
+     "https://raw.githubusercontent.com/dsouzadyn/drugReviews/master/drugsComTrain_raw.tsv",
+     "tsv", "clinical_pharmacist", "161K", "UCI Drug Reviews for conditions + side effects"),
+
+    # ====================== GITHUB — Open Medical Resources ===================
     ("icd10_codes",
      "https://raw.githubusercontent.com/kamillamagna/ICD-10-CSV/master/codes.csv",
      "csv", "regulatory_qa", "72K", "Complete ICD-10 diagnosis code descriptions"),
-
-    ("mesh_supplementary",
-     "https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/asciimesh/d2024.bin",
-     "mesh", "regulatory_qa", "30K", "MeSH 2024 medical subject headings"),
 
     ("who_essential_medicines",
      "https://raw.githubusercontent.com/nickloman/WHO-EML/master/WHO_EML_2023.csv",
      "csv", "clinical_pharmacist", "500", "WHO Essential Medicines List 2023"),
 
+    # ====================== GITHUB — Synthea (synthetic patient data) =========
     ("synthea_sample_patients",
      "https://raw.githubusercontent.com/synthetichealth/synthea-sample-data/master/csv/patients.csv",
      "csv", "clinical_decision", "1K", "Synthea synthetic patient demographics"),
@@ -234,26 +220,7 @@ URL_DATASETS = [
      "https://raw.githubusercontent.com/synthetichealth/synthea-sample-data/master/csv/observations.csv",
      "csv", "clinical_decision", "100K", "Synthea synthetic patient lab observations"),
 
-    ("mts_dialog_clinical_notes",
-     "https://raw.githubusercontent.com/abachaa/MTS-Dialog/main/Main-Dataset/MTS-Dialog-TrainingSet.csv",
-     "csv", "clinical_decision", "1.2K", "Medical dialogue to clinical note generation"),
-
-    ("mts_dialog_test",
-     "https://raw.githubusercontent.com/abachaa/MTS-Dialog/main/Main-Dataset/MTS-Dialog-TestSet-1-MEDIQA-Chat-2023.csv",
-     "csv", "clinical_decision", "200", "MTS-Dialog test set (MEDIQA-Chat 2023)"),
-
-    ("medication_qa_nlm",
-     "https://raw.githubusercontent.com/abachaa/Medication_QA_MedInfo2019/master/MedInfo2019-QA-Medications.xlsx",
-     "skip", "clinical_pharmacist", "674", "NLM medication Q&A (needs openpyxl — manual DL)"),
-
-    ("medical_dialog_processed",
-     "https://raw.githubusercontent.com/UCSD-AI4H/Medical-Dialogue-System/master/English/medical_data_clean.json",
-     "json", "clinical_decision", "230K", "UCSD Medical Dialogue cleaned English"),
-
-    ("open_ade_corpus",
-     "https://raw.githubusercontent.com/Sheikhizadeh/ADE-corpus/master/ADE-NEG.txt",
-     "ade_txt", "clinical_pharmacist", "20K", "Adverse Drug Events from medical case reports"),
-
+    # ====================== US GOV — CDC/CMS Open Data (no API key) ===========
     ("cdc_wonder_mortality_2022",
      "https://data.cdc.gov/api/views/bi63-dtpu/rows.csv?accessType=DOWNLOAD",
      "csv", "research", "1M", "CDC WONDER cause of death detailed mortality 2022"),

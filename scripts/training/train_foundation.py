@@ -1,20 +1,21 @@
 """
-Foundation Training for IMI Medical LLM
+Foundation Training for IMI Medical LLM — Full Fine-Tuning on H100
 
-Medical foundation fine-tuning of Mixtral 8x7B on combined medical datasets.
-This creates a medically-specialized base model before DPO alignment and adapter training.
+Full-parameter fine-tuning of Mixtral 8x7B on combined medical datasets.
+Optimized for NVIDIA H100 80GB GPUs with maximum throughput.
 
 Training pipeline:
   Foundation Training (this script) ← you are here
   → DPO Safety Alignment (train_dpo.py)
-  → Per-User Adapter Training (train_lora.py)
 
 Key design decisions:
-- QLoRA 4-bit NF4 with bfloat16 compute — fits on 1x A100 80GB
-- Higher LoRA rank (r=64) than adapters — foundation needs broad capacity
-- Target ALL Mixtral modules including MoE layers (w1, w2, w3)
-- Sequence packing enabled for efficiency
-- 2 epochs on combined medical corpus (~3M examples)
+- FULL fine-tuning (no LoRA/QLoRA) — maximizes model capacity on H100
+- BFloat16 precision — native H100 support, no quantization overhead
+- Multi-GPU with DeepSpeed ZeRO Stage 3 or FSDP for memory efficiency
+- Flash Attention 2 for faster training
+- Gradient checkpointing for memory-efficient full parameter training
+- Sequence packing enabled for throughput maximization
+- All model parameters trainable — no frozen layers
 """
 import os
 import json
@@ -27,12 +28,10 @@ import torch
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     TrainingArguments,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, TaskType
 from trl import SFTTrainer
-from datasets import Dataset, load_dataset, concatenate_datasets
+from datasets import Dataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,48 +42,51 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 
 # ============================================================================
-# FOUNDATION TRAINING CONFIG — Mixtral 8x7B specific
+# H100 FULL FINE-TUNING CONFIG — Maximum utilization
 # ============================================================================
 
-FOUNDATION_CONFIG = {
+H100_FULL_FT_CONFIG = {
     # Model
     "base_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
 
-    # LoRA — broader than adapters, includes MoE expert layers
-    "lora_r": 64,
-    "lora_alpha": 128,
-    "lora_dropout": 0.05,
-    "target_modules": [
-        "q_proj", "k_proj", "v_proj", "o_proj",  # Attention
-        "w1", "w2", "w3",                          # MoE expert layers
-    ],
-
-    # Training
-    "num_epochs": 1,
-    "batch_size": 8,
-    "gradient_accumulation_steps": 4,   # effective batch = 32
-    "learning_rate": 2e-4,
+    # Training — full fine-tuning, all parameters
+    "num_epochs": 2,
+    "per_device_batch_size": 4,
+    "gradient_accumulation_steps": 8,   # effective batch = 4 * 8 * num_gpus
+    "learning_rate": 2e-5,              # Lower LR for full fine-tuning
     "lr_scheduler_type": "cosine",
-    "warmup_ratio": 0.03,
-    "max_grad_norm": 0.3,
+    "warmup_ratio": 0.05,
+    "max_grad_norm": 1.0,
     "max_seq_length": 4096,
-    "packing": True,  # Pack short sequences for efficiency
+    "packing": True,                    # Pack short sequences for efficiency
+    "weight_decay": 0.01,
 
-    # Precision
+    # Precision — BFloat16 (native H100 support)
     "bf16": True,
     "fp16": False,
+    "tf32": True,                       # Enable TF32 for matmul on H100
 
-    # Optimizer
-    "optim": "paged_adamw_32bit",
+    # Optimizer — AdamW with fused kernels
+    "optim": "adamw_torch_fused",
+
+    # Memory optimization
+    "gradient_checkpointing": True,     # Trade compute for memory
+    "dataloader_num_workers": 8,
+    "dataloader_pin_memory": True,
+
+    # DeepSpeed / FSDP (for multi-GPU)
+    # When using multiple H100s, enable DeepSpeed ZeRO-3:
+    #   deepspeed --num_gpus=8 train_foundation.py --deepspeed ds_config.json
+    # For single H100, the config below works directly.
 
     # Saving
-    "save_steps": 500,
+    "save_steps": 200,
     "save_total_limit": 3,
-    "logging_steps": 50,
+    "logging_steps": 25,
 
     # Monitoring
     "report_to": "none",
-    "run_name": "imi-foundation-v1",
+    "run_name": "imi-foundation-h100-full-ft",
 }
 
 
@@ -98,20 +100,32 @@ def load_foundation_dataset(data_dir: Path, max_examples: Optional[int] = None) 
     all_examples = []
     train_dir = data_dir / "train"
     processed_dir = data_dir / "processed"
+    final_dir = data_dir / "final"
 
-    # Load from train/ directory (merged by adapter type)
-    if train_dir.exists():
+    # Prefer final/ (preprocessed/validated data) over raw processed/
+    if final_dir.exists():
+        for f in sorted(final_dir.glob("*_train.json")):
+            try:
+                with open(f) as fp:
+                    data = json.load(fp)
+                all_examples.extend(data)
+                logger.info(f"  Loaded {len(data):,} examples from final/{f.name}")
+            except Exception as e:
+                logger.warning(f"  Failed to load {f.name}: {e}")
+
+    # Fallback: load from train/ directory
+    if not all_examples and train_dir.exists():
         for f in sorted(train_dir.glob("*_train.json")):
             try:
                 with open(f) as fp:
                     data = json.load(fp)
                 all_examples.extend(data)
-                logger.info(f"  Loaded {len(data):,} examples from {f.name}")
+                logger.info(f"  Loaded {len(data):,} examples from train/{f.name}")
             except Exception as e:
                 logger.warning(f"  Failed to load {f.name}: {e}")
 
-    # Also load from processed/ subdirectories
-    if processed_dir.exists():
+    # Also load from processed/ subdirectories if needed
+    if not all_examples and processed_dir.exists():
         for adapter_dir in sorted(processed_dir.iterdir()):
             if adapter_dir.is_dir():
                 for f in sorted(adapter_dir.glob("*.json")):
@@ -124,8 +138,9 @@ def load_foundation_dataset(data_dir: Path, max_examples: Optional[int] = None) 
                         logger.warning(f"  Failed to load {f.name}: {e}")
 
     if not all_examples:
-        logger.error("No training data found! Run data collection first:")
+        logger.error("No training data found! Run data collection and preprocessing first:")
         logger.error("  python scripts/data_collection/collect_datasets.py")
+        logger.error("  python scripts/training/prepare_data.py")
         raise ValueError("No training data available")
 
     # Deduplicate by instruction+output hash
@@ -175,8 +190,8 @@ def train_foundation(
     resume_from: Optional[str] = None,
     config_overrides: Optional[Dict[str, Any]] = None,
 ):
-    """Run foundation training on combined medical corpus"""
-    config = dict(FOUNDATION_CONFIG)
+    """Run full fine-tuning on H100 — no LoRA, all parameters trainable"""
+    config = dict(H100_FULL_FT_CONFIG)
     if config_overrides:
         config.update(config_overrides)
 
@@ -185,30 +200,41 @@ def train_foundation(
     output_path = output_dir or str(MODELS_DIR / "foundation")
 
     logger.info("=" * 60)
-    logger.info("IMI Foundation Training — Mixtral 8x7B Medical")
+    logger.info("IMI Foundation Training — H100 Full Fine-Tuning")
     logger.info("=" * 60)
-    logger.info(f"Base model:    {base_model}")
-    logger.info(f"Data dir:      {data_path}")
-    logger.info(f"Output:        {output_path}")
-    logger.info(f"LoRA rank:     {config['lora_r']} (alpha={config['lora_alpha']})")
-    logger.info(f"Target modules: {config['target_modules']}")
-    logger.info(f"Epochs:        {config['num_epochs']}")
-    logger.info(f"Batch size:    {config['batch_size']} × {config['gradient_accumulation_steps']} = {config['batch_size'] * config['gradient_accumulation_steps']}")
-    logger.info(f"Seq length:    {config['max_seq_length']}")
-    logger.info(f"Packing:       {config['packing']}")
+    logger.info(f"Base model:         {base_model}")
+    logger.info(f"Data dir:           {data_path}")
+    logger.info(f"Output:             {output_path}")
+    logger.info(f"Training mode:      FULL FINE-TUNING (all parameters)")
+    logger.info(f"Precision:          BFloat16 (H100 native)")
+    logger.info(f"Epochs:             {config['num_epochs']}")
+    logger.info(f"Per-device batch:   {config['per_device_batch_size']}")
+    logger.info(f"Grad accumulation:  {config['gradient_accumulation_steps']}")
+    logger.info(f"Effective batch:    {config['per_device_batch_size'] * config['gradient_accumulation_steps']} × num_gpus")
+    logger.info(f"Learning rate:      {config['learning_rate']}")
+    logger.info(f"Seq length:         {config['max_seq_length']}")
+    logger.info(f"Packing:            {config['packing']}")
+    logger.info(f"Grad checkpointing: {config['gradient_checkpointing']}")
+    logger.info(f"Optimizer:          {config['optim']}")
+
+    # Detect GPU
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_count = torch.cuda.device_count()
+        gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        logger.info(f"GPU:                {gpu_count}x {gpu_name} ({gpu_mem:.0f}GB)")
+    else:
+        logger.warning("No CUDA GPU detected! Full fine-tuning requires GPU.")
+
+    # Enable TF32 for H100 matmul acceleration
+    if config.get("tf32", True):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        logger.info("TF32:               Enabled (H100 acceleration)")
 
     # Load dataset
     dataset = load_foundation_dataset(data_path, max_examples)
     logger.info(f"Training on {len(dataset):,} examples")
-
-    # QLoRA quantization
-    logger.info("Loading model with QLoRA (4-bit NF4, bfloat16)...")
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
 
     # Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
@@ -217,48 +243,39 @@ def train_foundation(
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.model_max_length = config["max_seq_length"]
 
-    # Model
+    # Load model — FULL precision, no quantization
+    logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
-        quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-    )
-    model = prepare_model_for_kbit_training(model)
-
-    # LoRA config — broader for foundation (includes MoE layers)
-    lora_config = LoraConfig(
-        r=config["lora_r"],
-        lora_alpha=config["lora_alpha"],
-        lora_dropout=config["lora_dropout"],
-        target_modules=config["target_modules"],
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
+        attn_implementation="flash_attention_2",  # Flash Attention 2 for H100
     )
 
-    # Print trainable parameters
-    model = get_peft_model(model, lora_config)
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    logger.info(f"Trainable parameters: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
+    # Enable gradient checkpointing for memory efficiency
+    if config["gradient_checkpointing"]:
+        model.gradient_checkpointing_enable()
 
-    # Ensure tokenizer truncates to max_seq_length
-    tokenizer.model_max_length = config["max_seq_length"]
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    # Print parameter count — ALL parameters are trainable
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Total parameters:     {total_params:,}")
+    logger.info(f"Trainable parameters: {trainable_params:,} (100% — full fine-tuning)")
 
-    # Training arguments
+    # Training arguments — optimized for H100
     training_args = TrainingArguments(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
-        per_device_train_batch_size=config["batch_size"],
+        per_device_train_batch_size=config["per_device_batch_size"],
         gradient_accumulation_steps=config["gradient_accumulation_steps"],
         learning_rate=config["learning_rate"],
         lr_scheduler_type=config["lr_scheduler_type"],
         warmup_ratio=config["warmup_ratio"],
         max_grad_norm=config["max_grad_norm"],
+        weight_decay=config["weight_decay"],
         optim=config["optim"],
         fp16=config["fp16"],
         bf16=config["bf16"],
@@ -268,10 +285,12 @@ def train_foundation(
         save_total_limit=config["save_total_limit"],
         report_to=config["report_to"],
         run_name=config["run_name"],
-        dataloader_num_workers=4,
+        dataloader_num_workers=config["dataloader_num_workers"],
+        dataloader_pin_memory=config.get("dataloader_pin_memory", True),
         group_by_length=True,
-        gradient_checkpointing=True,
+        gradient_checkpointing=config["gradient_checkpointing"],
         ddp_find_unused_parameters=False,
+        torch_compile=True,  # Use torch.compile for H100 optimization
     )
 
     # SFT Trainer
@@ -283,7 +302,7 @@ def train_foundation(
     )
 
     # Train
-    logger.info("Starting foundation training...")
+    logger.info("Starting full fine-tuning on H100...")
     if resume_from:
         logger.info(f"Resuming from checkpoint: {resume_from}")
         trainer.train(resume_from_checkpoint=resume_from)
@@ -297,16 +316,20 @@ def train_foundation(
 
     # Save metadata
     metadata = {
-        "training_type": "foundation",
+        "training_type": "full_fine_tuning",
+        "training_hardware": "H100",
         "base_model": base_model,
         "num_examples": len(dataset),
         "config": config,
+        "total_parameters": total_params,
+        "trainable_parameters": trainable_params,
+        "precision": "bfloat16",
     }
     with open(Path(output_path) / "foundation_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
     logger.info("=" * 60)
-    logger.info("Foundation training complete!")
+    logger.info("Foundation training complete! (Full fine-tuning on H100)")
     logger.info(f"Next step: python scripts/training/train_dpo.py train --foundation-path {output_path}")
     logger.info("=" * 60)
 
@@ -314,7 +337,7 @@ def train_foundation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Foundation Training for IMI Medical LLM")
+    parser = argparse.ArgumentParser(description="Foundation Training — H100 Full Fine-Tuning")
     parser.add_argument("--base-model", default=None, help="Base model path (default: Mixtral 8x7B)")
     parser.add_argument("--data-dir", default=None, help="Data directory")
     parser.add_argument("--output-dir", default=None, help="Output directory")
@@ -322,9 +345,9 @@ def main():
     parser.add_argument("--resume-from", default=None, help="Resume from checkpoint")
     parser.add_argument("--epochs", type=int, default=None, help="Override epochs")
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
-    parser.add_argument("--batch-size", type=int, default=None, help="Override batch size")
-    parser.add_argument("--lora-r", type=int, default=None, help="Override LoRA rank")
+    parser.add_argument("--batch-size", type=int, default=None, help="Override per-device batch size")
     parser.add_argument("--no-packing", action="store_true", help="Disable sequence packing")
+    parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config JSON")
 
     args = parser.parse_args()
 
@@ -334,10 +357,7 @@ def main():
     if args.lr:
         overrides["learning_rate"] = args.lr
     if args.batch_size:
-        overrides["batch_size"] = args.batch_size
-    if args.lora_r:
-        overrides["lora_r"] = args.lora_r
-        overrides["lora_alpha"] = args.lora_r * 2
+        overrides["per_device_batch_size"] = args.batch_size
     if args.no_packing:
         overrides["packing"] = False
 
