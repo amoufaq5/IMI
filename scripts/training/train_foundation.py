@@ -13,7 +13,7 @@ Key design decisions:
 - QLoRA — 4-bit NF4 quantization + LoRA adapters for memory efficiency
 - BFloat16 compute — native H100 support
 - 2×H100 multi-GPU via DDP
-- Flash Attention 2 for faster training
+- SDPA (PyTorch native Scaled Dot-Product Attention) for fast training
 - Gradient checkpointing for memory efficiency
 - Sequence packing enabled for throughput maximization
 """
@@ -29,10 +29,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
-    TrainingArguments,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer
+from peft import LoraConfig
+from trl import SFTTrainer, SFTConfig
 from datasets import Dataset
 
 logging.basicConfig(level=logging.INFO)
@@ -272,14 +271,11 @@ def train_foundation(
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         attn_implementation="sdpa",
     )
 
-    # Prepare model for QLoRA training
-    model = prepare_model_for_kbit_training(model)
-
-    # LoRA config
+    # LoRA config — SFTTrainer handles applying this to the model
     lora_config = LoraConfig(
         r=config["lora_r"],
         lora_alpha=config["lora_alpha"],
@@ -289,21 +285,13 @@ def train_foundation(
         task_type="CAUSAL_LM",
     )
 
-    model = get_peft_model(model, lora_config)
-
-    # Enable gradient checkpointing
-    if config["gradient_checkpointing"]:
-        model.gradient_checkpointing_enable()
-
-    # Print parameter count
+    # Print parameter count (before LoRA — SFTTrainer will apply it)
     total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    trainable_pct = 100 * trainable_params / total_params
-    logger.info(f"Total parameters:     {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,} ({trainable_pct:.2f}% — LoRA adapters)")
+    logger.info(f"Base model parameters: {total_params:,}")
 
-    # Training arguments
-    training_args = TrainingArguments(
+    # SFTConfig — replaces TrainingArguments in modern TRL
+    # max_seq_length and packing are set here, not on SFTTrainer
+    training_args = SFTConfig(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
         per_device_train_batch_size=config["per_device_batch_size"],
@@ -324,12 +312,15 @@ def train_foundation(
         run_name=config["run_name"],
         dataloader_num_workers=config["dataloader_num_workers"],
         dataloader_pin_memory=config.get("dataloader_pin_memory", True),
-        group_by_length=True,
         gradient_checkpointing=config["gradient_checkpointing"],
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         ddp_find_unused_parameters=False,
+        dataset_text_field="text",
+        max_seq_length=config["max_seq_length"],
+        packing=config["packing"],
     )
 
-    # SFT Trainer
+    # SFTTrainer — handles PEFT application, packing, and training
     trainer = SFTTrainer(
         model=model,
         args=training_args,
@@ -337,6 +328,11 @@ def train_foundation(
         processing_class=tokenizer,
         peft_config=lora_config,
     )
+
+    # Log trainable params after SFTTrainer applies LoRA
+    trainable_params = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
+    trainable_pct = 100 * trainable_params / total_params
+    logger.info(f"Trainable parameters: {trainable_params:,} ({trainable_pct:.2f}% — LoRA adapters)")
 
     # Train
     logger.info("Starting QLoRA fine-tuning on 2×H100...")

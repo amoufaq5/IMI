@@ -16,11 +16,11 @@ redis>=5.0.1
 neo4j>=5.16.0
 
 # LLM & ML
-torch>=2.1.2
-transformers>=4.40.0
-accelerate>=0.28.0
-peft>=0.7.1
-bitsandbytes>=0.42.0
+torch>=2.2.0
+transformers>=4.46.0
+accelerate>=0.34.0
+peft>=0.13.0
+bitsandbytes>=0.44.0
 datasets>=2.16.1
 sentencepiece>=0.1.99
 safetensors>=0.4.1
@@ -69,9 +69,9 @@ gdown>=5.1.0
 pymupdf>=1.23.0
 
 # Training (Mixtral 8x7B pipeline)
-trl>=0.7.0
+trl>=0.12.0
 wandb>=0.16.0
-flash-attn>=2.5.0
+# flash-attn>=2.5.0  # Optional — install only if binary matches your torch+CUDA versions; SDPA is used by default
 deepspeed>=0.12.0
 
 # Inference
