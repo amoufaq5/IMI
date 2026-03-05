@@ -1,7 +1,7 @@
 """
-Adapter Evaluation Script
+Model Evaluation Script
 
-Evaluates trained LoRA adapters on test sets:
+Evaluates the fine-tuned model on test sets:
 - Perplexity measurement
 - USMLE-style multiple-choice accuracy
 - Triage classification F1 score
@@ -19,7 +19,6 @@ from collections import Counter, defaultdict
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
 from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO)
@@ -192,42 +191,36 @@ def rouge_l(reference: str, hypothesis: str) -> Dict[str, float]:
 # EVALUATOR
 # ============================================================================
 
-class AdapterEvaluator:
-    """Evaluates trained adapters with medical-specific metrics"""
-    
+class ModelEvaluator:
+    """Evaluates the fine-tuned model with medical-specific metrics"""
+
     def __init__(
         self,
-        base_model_name: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
-        adapter_path: Optional[Path] = None,
+        model_path: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
     ):
-        self.base_model_name = base_model_name
-        self.adapter_path = adapter_path
+        self.base_model_name = model_path
         self.model = None
         self.tokenizer = None
-    
+
     def load_model(self):
-        """Load model with adapter"""
-        logger.info(f"Loading base model: {self.base_model_name}")
-        
+        """Load the fine-tuned model"""
+        logger.info(f"Loading model: {self.base_model_name}")
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.base_model_name,
             trust_remote_code=True,
         )
-        
+
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        
+
         self.model = AutoModelForCausalLM.from_pretrained(
             self.base_model_name,
             device_map="auto",
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         )
-        
-        if self.adapter_path and self.adapter_path.exists():
-            logger.info(f"Loading adapter from: {self.adapter_path}")
-            self.model = PeftModel.from_pretrained(self.model, self.adapter_path)
-        
+
         self.model.eval()
     
     # ------------------------------------------------------------------
@@ -675,55 +668,56 @@ class AdapterEvaluator:
         
         return results
     
-    def run_evaluation(self, adapter_name: str) -> Dict[str, Any]:
-        """Run full evaluation for an adapter"""
+    def run_evaluation(self, eval_name: str = "model") -> Dict[str, Any]:
+        """Run full evaluation for the fine-tuned model"""
         logger.info(f"{'='*60}")
-        logger.info(f"Evaluating adapter: {adapter_name}")
+        logger.info(f"Evaluating model: {self.base_model_name}")
         logger.info(f"{'='*60}")
-        
-        # Find test data
-        test_paths = [
-            DATA_DIR / "train" / f"{adapter_name}_val.json",
-            DATA_DIR / "processed" / adapter_name,
-            DATA_DIR / "synthetic" / f"{adapter_name}_synthetic.json",
-        ]
-        
+
+        # Find test data — check final/, train/, processed/, synthetic/
+        test_paths = []
+        for prefix in ["patient_triage", "clinical_pharmacist", "clinical_decision",
+                        "education", "regulatory_qa", "research"]:
+            test_paths.extend([
+                DATA_DIR / "final" / f"{prefix}_val.json",
+                DATA_DIR / "train" / f"{prefix}_val.json",
+            ])
+
         test_path = None
         for path in test_paths:
             if path.exists():
                 test_path = path
                 break
-        
+
         if not test_path:
-            logger.warning(f"No test data found for {adapter_name}")
+            logger.warning("No test data found")
             return {}
-        
+
         # Load model
-        self.adapter_path = ADAPTERS_DIR / adapter_name
         self.load_model()
-        
+
         # Evaluate
         results = self.evaluate_on_test_set(test_path)
-        results["adapter_name"] = adapter_name
-        results["base_model"] = self.base_model_name
-        
+        results["eval_name"] = eval_name
+        results["model"] = self.base_model_name
+
         # Save results
-        results_dir = ADAPTERS_DIR / adapter_name
+        results_dir = Path(self.base_model_name) if Path(self.base_model_name).exists() else MODELS_DIR
         results_dir.mkdir(parents=True, exist_ok=True)
         results_path = results_dir / "evaluation_results.json"
         with open(results_path, "w") as f:
             json.dump(results, f, indent=2, default=str)
-        
-        # ── Guardrail evaluation ──────────────────────────────────
+
+        # Guardrail evaluation
         results["guardrail_eval"] = self.evaluate_guardrails()
-        
-        # ── Threshold check ────────────────────────────────────────
+
+        # Threshold check
         threshold_result = check_thresholds(results)
         results["threshold_check"] = threshold_result
-        
+
         # Print summary table
         logger.info(f"\n{'='*60}")
-        logger.info(f"EVALUATION SUMMARY: {adapter_name}")
+        logger.info(f"EVALUATION SUMMARY")
         logger.info(f"{'='*60}")
         logger.info(f"  Perplexity .............. {results['perplexity']:.2f}")
         mcq = results.get("mcq_accuracy", {})
@@ -742,33 +736,32 @@ class AdapterEvaluator:
         gr = results.get("guardrail_eval", {})
         logger.info(f"  Crisis Detection Recall . {gr.get('crisis_recall', 0):.2%}")
         logger.info(f"  Emergency Det. Recall ... {gr.get('emergency_recall', 0):.2%}")
-        
+
         # Threshold pass/fail
         logger.info(f"\n{'─'*60}")
-        logger.info(f"THRESHOLD CHECK: {'✅ ALL PASS' if threshold_result['all_pass'] else '❌ SOME FAILED'}")
+        logger.info(f"THRESHOLD CHECK: {'PASS - ALL PASS' if threshold_result['all_pass'] else 'FAIL - SOME FAILED'}")
         logger.info(f"{'─'*60}")
         for metric, verdict in threshold_result["verdicts"].items():
             if verdict["pass"] is None:
-                status = "⚪ N/A"
+                status = "N/A"
             elif verdict["pass"]:
-                status = "✅ PASS"
+                status = "PASS"
             else:
-                status = "❌ FAIL"
+                status = "FAIL"
             logger.info(f"  {metric:<30s} {status}  (value={verdict['value']}, threshold={verdict['threshold']})")
-        
+
         logger.info(f"{'='*60}")
         logger.info(f"Full results saved to {results_path}")
-        
+
         if not threshold_result["all_pass"]:
-            logger.warning("⚠️  Adapter did NOT pass all thresholds. Do NOT deploy to production.")
-        
+            logger.warning("Model did NOT pass all thresholds. Do NOT deploy to production.")
+
         return results
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate trained adapters")
-    parser.add_argument("--adapter", required=True, help="Adapter name to evaluate")
-    parser.add_argument("--base-model", default="mistralai/Mixtral-8x7B-Instruct-v0.1", help="Base model")
+    parser = argparse.ArgumentParser(description="Evaluate fine-tuned model")
+    parser.add_argument("--model-path", required=True, help="Path to fine-tuned model")
     parser.add_argument(
         "--metrics",
         nargs="*",
@@ -776,11 +769,11 @@ def main():
         choices=["all", "perplexity", "mcq", "triage", "safety", "rouge"],
         help="Which metrics to run (default: all)",
     )
-    
+
     args = parser.parse_args()
-    
-    evaluator = AdapterEvaluator(base_model_name=args.base_model)
-    evaluator.run_evaluation(args.adapter)
+
+    evaluator = ModelEvaluator(model_path=args.model_path)
+    evaluator.run_evaluation()
 
 
 if __name__ == "__main__":

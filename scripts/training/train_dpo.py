@@ -1,13 +1,14 @@
 """
-DPO Safety Alignment Training for IMI Medical LLM
+DPO Safety Alignment Training for IMI Medical LLM — Full Fine-Tuning on H100
 
 Direct Preference Optimization (DPO) teaches the model to prefer safe responses
-over unsafe ones. This runs AFTER foundation training and BEFORE adapter training.
+over unsafe ones. This runs AFTER foundation training.
 
 Training pipeline:
-  Foundation (train_foundation.py)
-  → DPO Safety Alignment (this script)
-  → Per-User Adapter Training (train_lora.py)
+  Foundation (train_foundation.py) — full fine-tuning on H100
+  → DPO Safety Alignment (this script) — full fine-tuning on H100
+
+No LoRA — all parameters are updated for maximum safety alignment quality.
 
 Safety categories covered:
 - Medication dosing (safe hedge vs unsafe specific dose)
@@ -26,8 +27,7 @@ from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import DPOTrainer, DPOConfig
 from datasets import Dataset
 
@@ -279,14 +279,12 @@ def train_dpo(
     dataset = create_dpo_dataset(pairs)
     logger.info(f"Dataset size: {len(dataset)} pairs")
 
-    # Load model with QLoRA
-    logger.info("Loading foundation model with QLoRA...")
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
+    # Load model — full precision on H100 (no quantization)
+    logger.info("Loading foundation model in BFloat16 (full fine-tuning, no LoRA)...")
+
+    # Enable TF32 for H100 matmul acceleration
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
     tokenizer = AutoTokenizer.from_pretrained(
         foundation_path,
@@ -297,27 +295,26 @@ def train_dpo(
 
     model = AutoModelForCausalLM.from_pretrained(
         foundation_path,
-        quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-    )
-    model = prepare_model_for_kbit_training(model)
-
-    # LoRA config for DPO — lighter than foundation training
-    peft_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        bias="none",
-        task_type="CAUSAL_LM",
+        attn_implementation="flash_attention_2",
     )
 
-    # Reference model is the same as the model (implicit in DPO trainer)
-    # DPOTrainer handles ref model internally when using PEFT
+    # Load reference model separately for DPO (needed for full fine-tuning)
+    logger.info("Loading reference model for DPO...")
+    ref_model = AutoModelForCausalLM.from_pretrained(
+        foundation_path,
+        device_map="auto",
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+    )
+    ref_model.eval()
+    for param in ref_model.parameters():
+        param.requires_grad = False
 
-    # DPO training config
+    # DPO training config — optimized for H100
     dpo_config = DPOConfig(
         output_dir=output_dir,
         beta=beta,
@@ -330,25 +327,25 @@ def train_dpo(
         bf16=True,
         fp16=False,
         gradient_checkpointing=True,
-        optim="paged_adamw_32bit",
+        optim="adamw_torch_fused",
         logging_steps=5,
         save_steps=50,
         save_total_limit=2,
-        report_to="wandb",
-        run_name="imi-dpo-safety-alignment",
+        report_to="none",
+        run_name="imi-dpo-safety-h100-full-ft",
         warmup_ratio=0.1,
         lr_scheduler_type="cosine",
-        max_grad_norm=0.3,
+        max_grad_norm=1.0,
     )
 
-    # Initialize DPO trainer
-    logger.info("Initializing DPO trainer...")
+    # Initialize DPO trainer — full fine-tuning, no PEFT
+    logger.info("Initializing DPO trainer (full fine-tuning, no LoRA)...")
     trainer = DPOTrainer(
         model=model,
+        ref_model=ref_model,
         args=dpo_config,
         train_dataset=dataset,
         processing_class=tokenizer,
-        peft_config=peft_config,
     )
 
     # Train
@@ -362,7 +359,9 @@ def train_dpo(
 
     # Save training metadata
     metadata = {
-        "training_type": "dpo_safety_alignment",
+        "training_type": "dpo_safety_alignment_full_ft",
+        "training_hardware": "H100",
+        "training_mode": "full_fine_tuning",
         "foundation_model": foundation_path,
         "num_safety_pairs": len(pairs),
         "beta": beta,

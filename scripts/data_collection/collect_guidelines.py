@@ -1,23 +1,24 @@
 """
-Clinical Guidelines & QA/QC Data Source Collector
+Clinical Guidelines & QA/QC Data Source Collector — Open Sources Only
 
-Downloads open-source clinical practice guidelines, quality standards,
+Downloads open-access clinical practice guidelines, quality standards,
 and regulatory data for the regulatory_qa adapter.
 
-Sources:
-  - WHO (World Health Organization)
-  - CDC (Centers for Disease Control)
-  - AHRQ (Agency for Healthcare Research and Quality)
-  - NICE (National Institute for Health and Care Excellence)
-  - FDA (Food and Drug Administration)
-  - CMS (Centers for Medicare & Medicaid Services)
-  - OpenFDA API
-  - USPSTF (US Preventive Services Task Force)
-  - AHA / ACC / AMA guideline summaries
-  - ICD-10 / CPT / LOINC terminology
+NO credentials, API keys, or registration required. All sources are publicly accessible.
+
+Sources (all open/verified):
+  - CDC (Centers for Disease Control) — open data portal
+  - CMS (Centers for Medicare & Medicaid Services) — provider data
+  - OpenFDA API — no API key required for basic queries
+  - USPSTF (US Preventive Services Task Force) — public API
+  - AHRQ (Agency for Healthcare Research and Quality) — public data
+  - NICE (National Institute for Health and Care Excellence) — public API
+  - NLM RxNorm — public REST API
+  - ICD-10 codes — GitHub public dataset
+  - Health.gov — public API
 
 Usage:
-    pip install requests beautifulsoup4
+    pip install requests
     python scripts/data_collection/collect_guidelines.py              # download all
     python scripts/data_collection/collect_guidelines.py --category clinical   # specific category
     python scripts/data_collection/collect_guidelines.py --list       # list all sources
@@ -146,10 +147,6 @@ GUIDELINE_SOURCES = [
     ("icd10_categories",
      "https://raw.githubusercontent.com/kamillamagna/ICD-10-CSV/master/categories.csv",
      "csv", "terminology", "2K", "ICD-10 category groupings"),
-
-    ("loinc_top_codes",
-     "https://loinc.org/download/loinc-top-2000-plus-lab-orders/",
-     "skip", "terminology", "2K", "LOINC Top 2000+ Lab Orders (requires free registration at loinc.org)"),
 
     ("rxnorm_concepts",
      "https://rxnav.nlm.nih.gov/REST/allconcepts.json?tty=SBD",
