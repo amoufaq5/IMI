@@ -4,7 +4,7 @@
 
 | Feature | Status | Location |
 |---------|--------|----------|
-| Mixtral 8x7B base model | ✅ Done | `settings.py`, `meditron.py`, all training scripts |
+| Mistral 7B base model | ✅ Done | `settings.py`, `meditron.py`, all training scripts |
 | 40+ dataset catalogue | ✅ Done | `collect_datasets.py` |
 | 3-stage training pipeline | ✅ Done | `train_foundation.py` → `train_dpo.py` → `train_lora.py` |
 | DPO safety alignment | ✅ Done | `train_dpo.py` (30 seed pairs, expandable) |
@@ -62,7 +62,7 @@ After deployment, implement a feedback loop:
 ### 5. Multi-Language Support
 **Priority: MEDIUM** | **Effort: 1-2 weeks**
 
-Mixtral 8x7B already has multilingual capability. To enable:
+Mistral 7B already has multilingual capability. To enable:
 - Add Arabic and French medical datasets to the training pipeline
 - Create language-detection guardrails
 - Test safety patterns in target languages
@@ -130,14 +130,14 @@ Set up production monitoring:
 
 ## Architecture Comparison: Before vs After
 
-| Aspect | Before (Meditron-7B) | After (Mixtral 8x7B) |
+| Aspect | Before (Meditron-7B) | After (Mistral 7B) |
 |--------|---------------------|----------------------|
-| Base model | Meditron-7B (7B params) | Mixtral 8x7B (46.7B active) |
+| Base model | Meditron-7B (7B params) | Mistral 7B (7.3B) |
 | License | LLaMA license (restricted) | Apache 2.0 (commercial) |
 | Context window | 4,096 tokens | 32,768 tokens |
 | LoRA rank | r=16, α=32 | r=32, α=64 |
-| Target modules | q_proj, v_proj | q,k,v,o_proj (+ MoE for foundation) |
-| Training pipeline | Single-stage LoRA | 3-stage: Foundation → DPO → LoRA |
+| Target modules | q_proj, v_proj | All parameters (foundation), q,k,v,o_proj (adapters) |
+| Training pipeline | Single-stage LoRA | 3-stage: Foundation (full FT) → DPO → LoRA |
 | Safety alignment | None (rule engine only) | DPO + guardrails + rule engine + verifier |
 | Inference | Direct HF transformers | vLLM with LoRA hot-swapping |
 | Datasets | ~6 datasets | 40+ datasets (3M+ examples) |

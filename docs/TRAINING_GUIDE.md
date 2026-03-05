@@ -6,13 +6,13 @@ Complete guide for training domain-specific LoRA adapters for the IMI Medical LL
 
 ## Overview
 
-IMI uses a **3-stage training pipeline** on **Mixtral 8x7B** (Apache 2.0):
+IMI uses a **3-stage training pipeline** on **Mistral 7B** (Apache 2.0):
 
 1. **Foundation Training** — Medical domain adaptation on 3M+ examples
 2. **DPO Safety Alignment** — Teaches model to prefer safe responses
 3. **LoRA Adapter Training** — 6 user-type-specific adapters
 
-All stages use **QLoRA 4-bit NF4** with **bfloat16** compute, fitting on a single A100 80GB.
+Foundation training uses **full fine-tuning** with **bfloat16** compute on 2×H100 80GB. Adapter training uses LoRA.
 
 ---
 
@@ -162,14 +162,14 @@ data/final/
 
 ## Step 3: Training
 
-### Hardware Requirements (Mixtral 8x7B)
+### Hardware Requirements (Mistral 7B)
 
 | Configuration | GPU VRAM | Training Time (1 adapter) | Training Time (all, parallel) |
 |---------------|----------|--------------------------|------------------------------|
-| 4-bit QLoRA (recommended) | 80GB A100 | 4-8 hours | ~8 hrs on 6×A100-80GB |
+| Full fine-tuning (recommended) | 80GB A100 | 4-8 hours | ~8 hrs on 6×A100-80GB |
 | 8-bit | 2×80GB | 3-6 hours | ~6 hrs on 6×A100-80GB |
 
-> **Note:** Mixtral 8x7B in 4-bit QLoRA uses ~52GB VRAM. One A100 80GB per adapter.
+> **Note:** Mistral 7B full fine-tuning requires ~30GB VRAM. 2×H100 80GB recommended.
 > Wave-based parallel training runs N adapters simultaneously (1 per GPU).
 
 ### Stage 1: Foundation Training
@@ -229,7 +229,7 @@ python scripts/training/train_lora.py --adapter patient_triage --gpu 0
 
 ### Training Configuration
 
-Each adapter has optimized defaults for Mixtral 8x7B:
+Each adapter has optimized defaults for Mistral 7B:
 
 | Adapter | LoRA r | Alpha | LR | Epochs | Target Modules |
 |---------|--------|-------|-----|--------|----------------|
@@ -400,7 +400,7 @@ See `docs/RUNPOD_DEPLOYMENT_GUIDE.md` for detailed cloud setup.
 
 ### Out of Memory
 - Reduce batch size: `--batch-size 1`
-- Use 4-bit quantization (default)
+- Full fine-tuning in BFloat16
 - Reduce max sequence length in config
 
 ### Slow Training

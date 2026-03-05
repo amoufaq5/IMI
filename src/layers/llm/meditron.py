@@ -1,9 +1,9 @@
 """
-Mixtral 8x7B Model Integration
+Mistral 7B Model Integration
 
-Mixtral 8x7B is a Mixture-of-Experts LLM (Apache 2.0) used as IMI's base model.
+Mistral 7B is a dense decoder-only LLM (Apache 2.0) used as IMI's base model.
 After medical foundation fine-tuning + DPO safety alignment, it serves as the
-core generation engine with 6 LoRA adapters hot-swapped per user type.
+core generation engine.
 
 This module handles model loading, inference, and medical-specific optimizations.
 Also supports vLLM inference backend for production deployment.
@@ -16,32 +16,29 @@ import logging
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     GenerationConfig,
 )
-from peft import PeftModel, PeftConfig
 
 from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class MixtralMedicalModel:
+class MistralMedicalModel:
     """
-    Mixtral 8x7B Medical Language Model
-    
-    Base: mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache 2.0)
-    Architecture: Mixture of Experts (8 experts, 2 active per token)
+    Mistral 7B Medical Language Model
+
+    Base: mistralai/Mistral-7B-Instruct-v0.3 (Apache 2.0)
+    Architecture: Dense decoder-only transformer (7.3B parameters)
     Context: 32K tokens
-    
+
     Handles:
-    - Model loading with QLoRA quantization (4-bit NF4)
-    - LoRA adapter loading/hot-swapping for 6 user types
-    - Text generation with Mixtral chat template
+    - Model loading in BFloat16 (full precision)
+    - Text generation with Mistral chat template
     - Streaming generation support
     - Optional vLLM backend for production inference
     """
-    
+
     DEFAULT_GENERATION_CONFIG = {
         "max_new_tokens": 1024,
         "temperature": 0.1,
@@ -52,16 +49,14 @@ class MixtralMedicalModel:
         "pad_token_id": None,
         "eos_token_id": None,
     }
-    
-    # Mixtral chat template
+
+    # Mistral chat template
     CHAT_TEMPLATE = "<s>[INST] {system}\n\n{user} [/INST]"
-    
+
     def __init__(
         self,
         model_path: Optional[str] = None,
         device: Optional[str] = None,
-        load_in_4bit: bool = True,
-        load_in_8bit: bool = False,
         use_vllm: bool = False,
         vllm_url: Optional[str] = None,
     ):
@@ -70,12 +65,9 @@ class MixtralMedicalModel:
         self.model = None
         self.tokenizer = None
         self.generation_config = None
-        self.load_in_4bit = load_in_4bit
-        self.load_in_8bit = load_in_8bit
         self.use_vllm = use_vllm
         self.vllm_url = vllm_url or "http://localhost:8080"
-        self._loaded_adapters: Dict[str, bool] = {}
-    
+
     def load(self) -> None:
         """Load the model and tokenizer"""
         if self.use_vllm:
@@ -95,79 +87,33 @@ class MixtralMedicalModel:
             )
             logger.info("vLLM backend ready (tokenizer loaded locally)")
             return
-        
-        logger.info(f"Loading Mixtral 8x7B model from {self.model_path}")
-        
-        quantization_config = None
-        if self.load_in_4bit:
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            )
-        elif self.load_in_8bit:
-            quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-            )
-        
+
+        logger.info(f"Loading Mistral 7B model from {self.model_path}")
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_path,
             trust_remote_code=True,
             padding_side="left",
         )
-        
+
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        
-        model_kwargs = {
-            "trust_remote_code": True,
-            "torch_dtype": torch.bfloat16,
-            "device_map": "auto" if self.device == "cuda" else None,
-        }
-        
-        if quantization_config:
-            model_kwargs["quantization_config"] = quantization_config
-        
+
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
-            **model_kwargs,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            device_map="auto" if self.device == "cuda" else None,
         )
-        
+
         self.generation_config = GenerationConfig(
             **self.DEFAULT_GENERATION_CONFIG,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
         )
-        
-        logger.info("Mixtral 8x7B model loaded successfully")
-    
-    def load_adapter(self, adapter_path: str, adapter_name: str = "default") -> None:
-        """Load a LoRA adapter for domain-specific fine-tuning"""
-        if adapter_name in self._loaded_adapters:
-            logger.info(f"Adapter {adapter_name} already loaded")
-            return
-        
-        logger.info(f"Loading adapter {adapter_name} from {adapter_path}")
-        
-        if not self._loaded_adapters:
-            self.model = PeftModel.from_pretrained(
-                self.model,
-                adapter_path,
-                adapter_name=adapter_name,
-            )
-        else:
-            self.model.load_adapter(adapter_path, adapter_name=adapter_name)
-        
-        self._loaded_adapters[adapter_name] = True
-        logger.info(f"Adapter {adapter_name} loaded successfully")
-    
-    def set_adapter(self, adapter_name: str) -> None:
-        """Switch to a specific adapter"""
-        if adapter_name not in self._loaded_adapters:
-            raise ValueError(f"Adapter {adapter_name} not loaded")
-        self.model.set_adapter(adapter_name)
-    
+
+        logger.info("Mistral 7B model loaded successfully")
+
     def generate(
         self,
         prompt: str,
@@ -179,7 +125,7 @@ class MixtralMedicalModel:
         """Generate text from prompt"""
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        
+
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
@@ -187,10 +133,10 @@ class MixtralMedicalModel:
             truncation=True,
             max_length=settings.llm_max_length,
         )
-        
+
         if self.device == "cuda":
             inputs = {k: v.cuda() for k, v in inputs.items()}
-        
+
         gen_config = GenerationConfig(
             max_new_tokens=max_new_tokens or self.generation_config.max_new_tokens,
             temperature=temperature or self.generation_config.temperature,
@@ -201,25 +147,25 @@ class MixtralMedicalModel:
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
         )
-        
+
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
                 generation_config=gen_config,
             )
-        
+
         generated_text = self.tokenizer.decode(
             outputs[0][inputs["input_ids"].shape[1]:],
             skip_special_tokens=True,
         )
-        
+
         if stop_sequences:
             for stop_seq in stop_sequences:
                 if stop_seq in generated_text:
                     generated_text = generated_text.split(stop_seq)[0]
-        
+
         return generated_text.strip()
-    
+
     def generate_stream(
         self,
         prompt: str,
@@ -229,10 +175,10 @@ class MixtralMedicalModel:
         """Generate text with streaming output"""
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        
+
         from transformers import TextIteratorStreamer
         from threading import Thread
-        
+
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
@@ -240,16 +186,16 @@ class MixtralMedicalModel:
             truncation=True,
             max_length=settings.llm_max_length,
         )
-        
+
         if self.device == "cuda":
             inputs = {k: v.cuda() for k, v in inputs.items()}
-        
+
         streamer = TextIteratorStreamer(
             self.tokenizer,
             skip_prompt=True,
             skip_special_tokens=True,
         )
-        
+
         gen_config = GenerationConfig(
             max_new_tokens=max_new_tokens or self.generation_config.max_new_tokens,
             temperature=temperature or self.generation_config.temperature,
@@ -258,34 +204,34 @@ class MixtralMedicalModel:
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
         )
-        
+
         generation_kwargs = {
             **inputs,
             "generation_config": gen_config,
             "streamer": streamer,
         }
-        
+
         thread = Thread(target=self.model.generate, kwargs=generation_kwargs)
         thread.start()
-        
+
         for text in streamer:
             yield text
-        
+
         thread.join()
-    
+
     def encode(self, text: str) -> torch.Tensor:
         """Encode text to token IDs"""
         return self.tokenizer.encode(text, return_tensors="pt")
-    
+
     def decode(self, token_ids: torch.Tensor) -> str:
         """Decode token IDs to text"""
         return self.tokenizer.decode(token_ids, skip_special_tokens=True)
-    
+
     def get_embeddings(self, text: str) -> torch.Tensor:
         """Get text embeddings from the model"""
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        
+
         inputs = self.tokenizer(
             text,
             return_tensors="pt",
@@ -293,38 +239,42 @@ class MixtralMedicalModel:
             truncation=True,
             max_length=settings.llm_max_length,
         )
-        
+
         if self.device == "cuda":
             inputs = {k: v.cuda() for k, v in inputs.items()}
-        
+
         with torch.no_grad():
             outputs = self.model(**inputs, output_hidden_states=True)
             hidden_states = outputs.hidden_states[-1]
             embeddings = hidden_states.mean(dim=1)
-        
+
         return embeddings
-    
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text"""
         return len(self.tokenizer.encode(text))
-    
+
     def unload(self) -> None:
         """Unload model from memory"""
         if self.model is not None:
             del self.model
             self.model = None
-        
+
         if self.tokenizer is not None:
             del self.tokenizer
             self.tokenizer = None
-        
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
-        self._loaded_adapters.clear()
+
         logger.info("Model unloaded")
-    
+
     @property
     def is_loaded(self) -> bool:
         """Check if model is loaded"""
         return self.model is not None
+
+
+# Backward compatibility aliases
+MixtralMedicalModel = MistralMedicalModel
+MeditronModel = MistralMedicalModel

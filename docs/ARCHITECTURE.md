@@ -157,16 +157,16 @@ The IMI (Intelligent Medical Interface) platform is a production-grade medical L
 **Purpose:** Natural language generation, explanation, and synthesis. NEVER decides alone on safety.
 
 **Components:**
-- `meditron.py` - Mixtral 8x7B model wrapper (`MixtralMedicalModel`):
-  - Base: `mistralai/Mixtral-8x7B-Instruct-v0.1` (Apache 2.0)
-  - Architecture: Mixture of Experts (8 experts, 2 active per token, 32K context)
+- `meditron.py` - Mistral 7B model wrapper (`MistralMedicalModel`):
+  - Base: `mistralai/Mistral-7B-Instruct-v0.3` (Apache 2.0)
+  - Architecture: Dense transformer (7.3B parameters, 32K context)
   - 3-stage training: Foundation → DPO Safety Alignment → LoRA Adapters
-  - Model loading with QLoRA quantization (4-bit NF4, bfloat16)
+  - Model loading with BFloat16 (full precision)
   - LoRA adapter management (r=32, alpha=64, targets: q,k,v,o_proj)
-  - Mixtral chat template: `<s>[INST] {system}\n\n{user} [/INST]`
+  - Mistral chat template: `<s>[INST] {system}\n\n{user} [/INST]`
   - Optional vLLM backend for production inference (LoRA hot-swapping)
   - Streaming support
-  - Backward-compatible alias: `MeditronModel = MixtralMedicalModel`
+  - Backward-compatible alias: `MeditronModel = MistralMedicalModel`
 
 - `prompts.py` - Role-specific prompts:
   - `RoleType` enum: PATIENT, DOCTOR, STUDENT, RESEARCHER, PHARMA, HOSPITAL

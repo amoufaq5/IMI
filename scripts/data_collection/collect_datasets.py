@@ -1,6 +1,6 @@
 """Medical Dataset Collection Script
 
-Downloads and prepares 40+ open medical datasets for Mixtral 8x7B fine-tuning.
+Downloads and prepares 40+ open medical datasets for Mistral 7B fine-tuning.
 Organized by adapter type with quality ratings and license verification.
 
 Dataset sources:

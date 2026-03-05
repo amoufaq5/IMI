@@ -2,12 +2,12 @@
 
 ## Overview
 
-**IMI** is a 5-layer medical AI platform powered by Mixtral 8x7B with 6 domain-specific LoRA adapters,
+**IMI** is a 5-layer medical AI platform powered by Mistral 7B with 6 domain-specific LoRA adapters,
 deterministic safety guardrails, and a knowledge-graph-backed verification system.
 
 **Key differentiators:**
 - **5-Layer Safety Architecture** — Memory → Knowledge Graph → Rule Engine → LLM → Verifier
-- **Mixtral 8x7B** base with QLoRA adapters per user type (doctor, patient, student, researcher, hospital, pharma)
+- **Mistral 7B** base with full fine-tuning per user type (doctor, patient, student, researcher, hospital, pharma)
 - **Zero hallucination tolerance** — every LLM output verified against knowledge graph + guidelines
 - **DPO safety alignment** — model trained to prefer safe responses via Direct Preference Optimization
 - **Sub-200ms inference** via vLLM with LoRA hot-swapping
@@ -125,8 +125,8 @@ Query → [Layer 0: Memory] → [Layer 1: Knowledge Graph] → [Layer 2: Rule En
 
 | Component | Specification |
 |-----------|--------------|
-| Base Model | Mixtral 8x7B-Instruct (Apache 2.0) |
-| Quantization | QLoRA 4-bit NF4, bfloat16 compute |
+| Base Model | Mistral 7B-Instruct (Apache 2.0) |
+| Training | Full fine-tuning, BFloat16 compute |
 | Adapters | 6 LoRA adapters (r=32, α=64) |
 | Training Data | 40+ open medical datasets, 3M+ examples |
 | Safety | DPO alignment + regex guardrails + rule engine + verifier |
@@ -139,7 +139,7 @@ Query → [Layer 0: Memory] → [Layer 1: Knowledge Graph] → [Layer 2: Rule En
 | Phase | Cost | Duration |
 |-------|------|----------|
 | Data collection & processing | $0 (open datasets) | Week 1 |
-| Foundation training (Mixtral 8x7B) | ~$1,500 | Week 1-2 |
+| Foundation training (Mistral 7B) | ~$1,500 | Week 1-2 |
 | DPO safety alignment | ~$200 | Week 2 |
 | Adapter training (6 adapters) | ~$2,000 | Week 2-3 |
 | Evaluation & iteration | ~$300 | Week 3 |
@@ -153,7 +153,7 @@ Query → [Layer 0: Memory] → [Layer 1: Knowledge Graph] → [Layer 2: Rule En
 3. **6 specialized adapters** — Purpose-built for each user type, not one-size-fits-all
 4. **Knowledge graph grounding** — Responses backed by verified medical knowledge
 5. **Full audit trail** — Every query, response, and safety decision logged for compliance
-6. **Cost-efficient** — QLoRA training on commodity GPUs, vLLM inference at scale
+6. **Cost-efficient** — Full fine-tuning on H100 GPUs, vLLM inference at scale
 
 ---
 

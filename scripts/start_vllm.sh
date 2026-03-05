@@ -2,7 +2,7 @@
 # ============================================================================
 # IMI Medical AI — vLLM Inference Server with LoRA Hot-Swapping
 #
-# Serves Mixtral 8x7B with all 6 LoRA adapters simultaneously.
+# Serves Mistral 7B for inference.
 # Adapters are loaded at startup and hot-swapped per request based on user_type.
 #
 # Usage:

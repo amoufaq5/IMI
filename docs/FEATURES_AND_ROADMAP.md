@@ -8,7 +8,7 @@
 |-------|-----------|--------|-------------|
 | L1 | Knowledge Graph | ✅ Done | Neo4j-based medical knowledge (diseases, drugs, symptoms, interactions) |
 | L2 | Rule Engine | ✅ Done | Deterministic safety rules, contraindication checking, drug interactions |
-| L3 | LLM Integration | ✅ Done | Meditron-7B with domain-specific LoRA adapters (QLoRA 4-bit, parallel multi-GPU training) |
+| L3 | LLM Integration | ✅ Done | Mistral 7B with full fine-tuning + domain-specific LoRA adapters |
 | L4 | Verifier/Critic | ✅ Done | Hallucination detection, guideline compliance, safety verification |
 | L5 | Memory & Profiling | ✅ Done | HIPAA-compliant patient profiles, conversation history, preferences |
 
@@ -36,7 +36,7 @@
 - **Data Collection**: 22 open medical datasets (~3M+ examples)
 - **Synthetic Generator**: Triage, drug interactions, USMLE, regulatory scenarios
 - **PDF Ingestion**: WHO/FDA/EMA regulatory document extraction
-- **LoRA Training**: Efficient fine-tuning with 4-bit/8-bit quantization
+- **LoRA Training**: Full fine-tuning with BFloat16 precision
 - **Evaluation**: Perplexity measurement, generation quality assessment
 
 ### 5. API & Integration

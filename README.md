@@ -17,7 +17,7 @@ A production-grade medical LLM platform with hybrid cognition architecture servi
    - If-then medical reasoning
 
 3. **Layer 3 - LLM (Language + Synthesis)**
-   - Meditron-7B medical language model (4-bit QLoRA)
+   - Mistral 7B medical language model (full fine-tuning)
    - 6 domain-specific LoRA adapters (r=16, alpha=32)
    - Parallel multi-GPU training support
    - Never decides alone - always verified

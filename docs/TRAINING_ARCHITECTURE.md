@@ -63,8 +63,8 @@
 
    +---------------------------------------------------------------+
    |                                                               |
-   |   Base Model: Mixtral 8x7B Instruct v0.1                     |
-   |   (46.7B parameters — ALL trainable, no LoRA)                 |
+   |   Base Model: Mistral 7B Instruct v0.3                     |
+   |   (7.3B parameters — ALL trainable, no LoRA)                 |
    |                                                               |
    |   +-------------------+    +-----------------------------+    |
    |   | Model Loading     |    | H100 Optimizations          |    |
@@ -106,7 +106,7 @@
                +---------------------+
                | models/foundation/  |
                | (Full fine-tuned    |
-               |  Mixtral 8x7B)      |
+               |  Mistral 7B)      |
                +---------------------+
                           |
                           v
@@ -147,7 +147,7 @@
                +---------------------+
                | models/dpo_aligned/ |
                | (Safety-aligned     |
-               |  Mixtral 8x7B)      |
+               |  Mistral 7B)      |
                +---------------------+
                           |
                           v

@@ -1,8 +1,7 @@
 """
-Foundation Training for IMI Medical LLM — QLoRA on 2×H100
+Foundation Training for IMI Medical LLM — Full Fine-Tuning on 2×H100
 
-Parameter-efficient fine-tuning of Mixtral 8x7B on combined medical datasets
-using QLoRA (4-bit quantization + LoRA adapters).
+Full fine-tuning of Mistral 7B on combined medical datasets.
 Configured for 2× NVIDIA H100 80GB GPUs.
 
 Training pipeline:
@@ -10,9 +9,9 @@ Training pipeline:
   → DPO Safety Alignment (train_dpo.py)
 
 Key design decisions:
-- QLoRA — 4-bit NF4 quantization + LoRA adapters for memory efficiency
-- BFloat16 compute — native H100 support
-- 2×H100 multi-GPU via DDP
+- Full fine-tuning — all parameters updated for maximum quality
+- BFloat16 mixed precision — native H100 support
+- 2×H100 multi-GPU via DDP / FSDP
 - SDPA (PyTorch native Scaled Dot-Product Attention) for fast training
 - Gradient checkpointing for memory efficiency
 - Sequence packing enabled for throughput maximization
@@ -25,12 +24,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-)
-from peft import LoraConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import SFTTrainer, SFTConfig
 from datasets import Dataset
 
@@ -43,33 +37,18 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 
 # ============================================================================
-# 2×H100 QLoRA CONFIG
+# 2×H100 FULL FINE-TUNE CONFIG
 # ============================================================================
 
-H100_QLORA_CONFIG = {
+H100_FULL_FT_CONFIG = {
     # Model
-    "base_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-
-    # QLoRA parameters
-    "lora_r": 64,
-    "lora_alpha": 128,
-    "lora_dropout": 0.05,
-    "lora_target_modules": [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ],
-
-    # Quantization
-    "load_in_4bit": True,
-    "bnb_4bit_quant_type": "nf4",
-    "bnb_4bit_compute_dtype": "bfloat16",
-    "bnb_4bit_use_double_quant": True,
+    "base_model": "mistralai/Mistral-7B-Instruct-v0.3",
 
     # Training
     "num_epochs": 2,
     "per_device_batch_size": 4,
     "gradient_accumulation_steps": 4,   # effective batch = 4 * 4 * 2 GPUs = 32
-    "learning_rate": 2e-4,              # Higher LR typical for LoRA
+    "learning_rate": 2e-5,              # Lower LR for full fine-tuning
     "lr_scheduler_type": "cosine",
     "warmup_ratio": 0.05,
     "max_grad_norm": 1.0,
@@ -82,8 +61,8 @@ H100_QLORA_CONFIG = {
     "fp16": False,
     "tf32": True,
 
-    # Optimizer
-    "optim": "paged_adamw_8bit",
+    # Optimizer — fused AdamW for H100 (no paged/8bit needed for full FT)
+    "optim": "adamw_torch_fused",
 
     # Memory optimization
     "gradient_checkpointing": True,
@@ -97,7 +76,7 @@ H100_QLORA_CONFIG = {
 
     # Monitoring
     "report_to": "none",
-    "run_name": "imi-foundation-2xh100-qlora",
+    "run_name": "imi-foundation-2xh100-full-ft",
 }
 
 
@@ -174,7 +153,7 @@ def load_foundation_dataset(data_dir: Path, max_examples: Optional[int] = None) 
         unique_examples = unique_examples[:max_examples]
         logger.info(f"Capped to {max_examples:,} examples")
 
-    # Format for SFTTrainer — single 'text' column with Mixtral chat template
+    # Format for SFTTrainer — single 'text' column with Mistral chat template
     formatted = []
     for ex in unique_examples:
         instruction = ex.get("instruction", "")
@@ -186,7 +165,7 @@ def load_foundation_dataset(data_dir: Path, max_examples: Optional[int] = None) 
         else:
             user_msg = instruction
 
-        # Mixtral chat template
+        # Mistral chat template
         text = f"<s>[INST] {user_msg} [/INST] {output}</s>"
         formatted.append({"text": text})
 
@@ -201,8 +180,8 @@ def train_foundation(
     resume_from: Optional[str] = None,
     config_overrides: Optional[Dict[str, Any]] = None,
 ):
-    """Run QLoRA fine-tuning on 2×H100"""
-    config = dict(H100_QLORA_CONFIG)
+    """Run full fine-tuning on 2×H100"""
+    config = dict(H100_FULL_FT_CONFIG)
     if config_overrides:
         config.update(config_overrides)
 
@@ -211,13 +190,13 @@ def train_foundation(
     output_path = output_dir or str(MODELS_DIR / "foundation")
 
     logger.info("=" * 60)
-    logger.info("IMI Foundation Training — 2×H100 QLoRA")
+    logger.info("IMI Foundation Training — 2×H100 Full Fine-Tuning")
     logger.info("=" * 60)
     logger.info(f"Base model:         {base_model}")
     logger.info(f"Data dir:           {data_path}")
     logger.info(f"Output:             {output_path}")
-    logger.info(f"Training mode:      QLoRA (4-bit NF4 + LoRA r={config['lora_r']})")
-    logger.info(f"Precision:          BFloat16 compute, 4-bit NF4 storage")
+    logger.info(f"Training mode:      Full fine-tuning (all parameters)")
+    logger.info(f"Precision:          BFloat16 mixed precision")
     logger.info(f"Epochs:             {config['num_epochs']}")
     logger.info(f"Per-device batch:   {config['per_device_batch_size']}")
     logger.info(f"Grad accumulation:  {config['gradient_accumulation_steps']}")
@@ -256,41 +235,20 @@ def train_foundation(
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.model_max_length = config["max_seq_length"]
 
-    # 4-bit quantization config
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type=config["bnb_4bit_quant_type"],
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=config["bnb_4bit_use_double_quant"],
-    )
-
-    # Load model with 4-bit quantization
-    logger.info("Loading model with 4-bit NF4 quantization...")
+    # Load model in BFloat16 — full precision, no quantization
+    logger.info("Loading model in BFloat16 (full fine-tuning)...")
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
-        quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         attn_implementation="sdpa",
     )
 
-    # LoRA config — SFTTrainer handles applying this to the model
-    lora_config = LoraConfig(
-        r=config["lora_r"],
-        lora_alpha=config["lora_alpha"],
-        lora_dropout=config["lora_dropout"],
-        target_modules=config["lora_target_modules"],
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-
-    # Print parameter count (before LoRA — SFTTrainer will apply it)
     total_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Base model parameters: {total_params:,}")
+    logger.info(f"Model parameters: {total_params:,} (all trainable)")
 
-    # SFTConfig — replaces TrainingArguments in modern TRL
-    # max_seq_length and packing are set here, not on SFTTrainer
+    # SFTConfig
     training_args = SFTConfig(
         output_dir=output_path,
         num_train_epochs=config["num_epochs"],
@@ -317,39 +275,37 @@ def train_foundation(
         ddp_find_unused_parameters=False,
     )
 
-    # SFTTrainer — handles PEFT application, packing, and training
+    # SFTTrainer — full fine-tuning, no PEFT
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
-        peft_config=lora_config,
         dataset_text_field="text",
         max_seq_length=config["max_seq_length"],
         packing=config["packing"],
     )
 
-    # Log trainable params after SFTTrainer applies LoRA
     trainable_params = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
     trainable_pct = 100 * trainable_params / total_params
-    logger.info(f"Trainable parameters: {trainable_params:,} ({trainable_pct:.2f}% — LoRA adapters)")
+    logger.info(f"Trainable parameters: {trainable_params:,} ({trainable_pct:.2f}%)")
 
     # Train
-    logger.info("Starting QLoRA fine-tuning on 2×H100...")
+    logger.info("Starting full fine-tuning on 2×H100...")
     if resume_from:
         logger.info(f"Resuming from checkpoint: {resume_from}")
         trainer.train(resume_from_checkpoint=resume_from)
     else:
         trainer.train()
 
-    # Save LoRA adapters
-    logger.info(f"Saving LoRA adapters to {output_path}")
+    # Save full model
+    logger.info(f"Saving model to {output_path}")
     trainer.save_model(output_path)
     tokenizer.save_pretrained(output_path)
 
     # Save metadata
     metadata = {
-        "training_type": "qlora",
+        "training_type": "full_fine_tuning",
         "training_hardware": "2xH100",
         "base_model": base_model,
         "num_examples": len(dataset),
@@ -357,15 +313,13 @@ def train_foundation(
         "total_parameters": total_params,
         "trainable_parameters": trainable_params,
         "trainable_pct": trainable_pct,
-        "precision": "4bit_nf4_compute_bf16",
-        "lora_r": config["lora_r"],
-        "lora_alpha": config["lora_alpha"],
+        "precision": "bfloat16",
     }
     with open(Path(output_path) / "foundation_metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
 
     logger.info("=" * 60)
-    logger.info("Foundation training complete! (QLoRA on 2×H100)")
+    logger.info("Foundation training complete! (Full fine-tuning on 2×H100)")
     logger.info(f"Next step: python scripts/training/train_dpo.py train --foundation-path {output_path}")
     logger.info("=" * 60)
 
@@ -373,8 +327,8 @@ def train_foundation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Foundation Training — 2×H100 QLoRA")
-    parser.add_argument("--base-model", default=None, help="Base model path (default: Mixtral 8x7B)")
+    parser = argparse.ArgumentParser(description="Foundation Training — 2×H100 Full Fine-Tuning")
+    parser.add_argument("--base-model", default=None, help="Base model path (default: Mistral 7B)")
     parser.add_argument("--data-dir", default=None, help="Data directory")
     parser.add_argument("--output-dir", default=None, help="Output directory")
     parser.add_argument("--max-examples", type=int, default=None, help="Cap training examples")
@@ -383,7 +337,6 @@ def main():
     parser.add_argument("--lr", type=float, default=None, help="Override learning rate")
     parser.add_argument("--batch-size", type=int, default=None, help="Override per-device batch size")
     parser.add_argument("--no-packing", action="store_true", help="Disable sequence packing")
-    parser.add_argument("--lora-r", type=int, default=None, help="Override LoRA rank")
     parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config JSON")
 
     args = parser.parse_args()
@@ -397,8 +350,6 @@ def main():
         overrides["per_device_batch_size"] = args.batch_size
     if args.no_packing:
         overrides["packing"] = False
-    if args.lora_r:
-        overrides["lora_r"] = args.lora_r
 
     train_foundation(
         base_model=args.base_model,
