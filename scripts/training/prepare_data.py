@@ -69,7 +69,7 @@ MULTIPLE_SPACES_RE = re.compile(r" {2,}")
 ENCODING_CORRUPTION_PATTERNS = [
     re.compile(r"[\ufffd]{3,}"),          # Unicode replacement chars
     re.compile(r"\\x[0-9a-f]{2}", re.I), # Escaped hex bytes
-    re.compile(r"Ã[€-¿]{2,}"),           # Mojibake (UTF-8 read as Latin-1)
+    re.compile(r"\u00c3[\u0080-\u00bf]{2,}"),  # Mojibake (UTF-8 read as Latin-1)
 ]
 
 
