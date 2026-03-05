@@ -271,7 +271,7 @@ def train_foundation(
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         attn_implementation="sdpa",
     )
 
@@ -315,9 +315,6 @@ def train_foundation(
         gradient_checkpointing=config["gradient_checkpointing"],
         gradient_checkpointing_kwargs={"use_reentrant": False},
         ddp_find_unused_parameters=False,
-        dataset_text_field="text",
-        max_seq_length=config["max_seq_length"],
-        packing=config["packing"],
     )
 
     # SFTTrainer — handles PEFT application, packing, and training
@@ -327,6 +324,9 @@ def train_foundation(
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=lora_config,
+        dataset_text_field="text",
+        max_seq_length=config["max_seq_length"],
+        packing=config["packing"],
     )
 
     # Log trainable params after SFTTrainer applies LoRA
