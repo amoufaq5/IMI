@@ -345,7 +345,7 @@ def train_dpo(
         ref_model=ref_model,
         args=dpo_config,
         train_dataset=dataset,
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
     )
 
     # Train

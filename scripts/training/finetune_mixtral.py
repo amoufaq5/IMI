@@ -431,7 +431,7 @@ def run_training(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
         dataset_text_field="text",
         max_seq_length=tier_cfg["max_seq_length"],
         packing=False,   # packing=False avoids tokenizer edge cases in QLoRA

@@ -354,7 +354,7 @@ def train_foundation(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
         dataset_text_field="text",             # explicit — avoids trl warning/error
         max_seq_length=config["max_seq_length"],
         packing=config["packing"],             # was in config but never passed before
