@@ -11,7 +11,8 @@
     "stage3_max_reuse_distance": 1e9,
 
     "offload_optimizer": {
-      "device": "none"
+      "device": "cpu",
+      "pin_memory": true
     },
 
     "offload_param": {
