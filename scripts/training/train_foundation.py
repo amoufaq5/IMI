@@ -43,12 +43,20 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
 )
-# Compatibility shim: newer PyTorch removed `log` from the elastic agent API
-# but older DeepSpeed (pulled in transitively by trl) still tries to import it.
+# Compatibility shim: newer PyTorch removed `log` and `_get_socket_with_port`
+# from the elastic agent API but older DeepSpeed (pulled in by trl) still needs them.
 import torch.distributed.elastic.agent.server.api as _tde_api
 if not hasattr(_tde_api, "log"):
     import logging as _logging
     _tde_api.log = _logging.getLogger("torch.distributed.elastic.agent.server.api")
+if not hasattr(_tde_api, "_get_socket_with_port"):
+    import socket as _socket
+    def _get_socket_with_port() -> _socket.socket:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.bind(("localhost", 0))
+        s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        return s
+    _tde_api._get_socket_with_port = _get_socket_with_port
 del _tde_api
 from trl import SFTTrainer
 from datasets import Dataset
