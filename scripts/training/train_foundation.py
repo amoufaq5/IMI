@@ -31,11 +31,14 @@ import json
 import logging
 import argparse
 import random
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 import torch
+import torch.distributed as dist
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
@@ -217,6 +220,81 @@ def load_foundation_dataset(data_dir: Path, max_examples: Optional[int] = None) 
 
 
 # =============================================================================
+# ZeRO STAGE 3 WEIGHT LOADING
+# =============================================================================
+
+def _load_zero3_pretrained_weights(model: torch.nn.Module, model_name: str, dtype: torch.dtype) -> None:
+    """Load HuggingFace pretrained weights into a DeepSpeed ZeRO Stage 3 partitioned model.
+
+    Cannot use from_pretrained inside zero.Init because:
+    - zero.Init immediately partitions params to size [0] on non-owning ranks
+    - from_pretrained's weight-copy then fails with shape mismatch
+    Instead: create empty model with from_config inside zero.Init, then load
+    weights shard-by-shard here using GatheredParameters so each param is
+    temporarily gathered on rank 0 for the copy, then automatically re-partitioned.
+    """
+    import deepspeed
+
+    # Resolve model_name to a local directory (HuggingFace cache or local path)
+    local_path = Path(model_name)
+    if not local_path.is_dir():
+        from transformers.utils import cached_file
+        _idx = cached_file(model_name, "model.safetensors.index.json", _raise_exceptions_for_missing_entries=False)
+        if _idx is None:
+            _idx = cached_file(model_name, "pytorch_model.bin.index.json", _raise_exceptions_for_missing_entries=False)
+        if _idx is None:
+            raise FileNotFoundError(f"Cannot find weight index for {model_name}")
+        local_path = Path(_idx).parent
+
+    # Build weight_map: param_name → shard filename
+    index_file = local_path / "model.safetensors.index.json"
+    if not index_file.exists():
+        index_file = local_path / "pytorch_model.bin.index.json"
+    if index_file.exists():
+        with open(index_file) as f:
+            weight_map: Dict[str, str] = json.load(f)["weight_map"]
+    else:
+        # Single-file model
+        sf = local_path / "model.safetensors"
+        pt = local_path / "pytorch_model.bin"
+        fname = sf.name if sf.exists() else pt.name
+        if sf.exists():
+            from safetensors.torch import load_file as _sf_load
+            weight_map = {k: fname for k in _sf_load(str(sf), device="cpu")}
+        else:
+            weight_map = {k: fname for k in torch.load(str(pt), map_location="cpu")}
+
+    # Group params by shard file so we load each file only once
+    shard_to_params: Dict[str, list] = defaultdict(list)
+    param_dict = dict(model.named_parameters())
+    for pname in param_dict:
+        shard = weight_map.get(pname)
+        if shard:
+            shard_to_params[shard].append(pname)
+
+    logger.info(f"Loading weights from {len(shard_to_params)} shard(s) into ZeRO3 model...")
+    for shard_filename, param_names in shard_to_params.items():
+        params_to_gather = [param_dict[n] for n in param_names]
+        # GatheredParameters temporarily restores full tensors on modifier_rank=0,
+        # lets us copy checkpoint data in, then re-partitions on __exit__.
+        with deepspeed.zero.GatheredParameters(params_to_gather, modifier_rank=0):
+            if dist.get_rank() == 0:
+                shard_path = local_path / shard_filename
+                if shard_path.suffix == ".safetensors":
+                    from safetensors.torch import load_file as _sf_load
+                    shard_sd = _sf_load(str(shard_path), device="cpu")
+                else:
+                    shard_sd = torch.load(str(shard_path), map_location="cpu")
+                for pname in param_names:
+                    if pname in shard_sd:
+                        param_dict[pname].data.copy_(shard_sd[pname].to(dtype))
+                del shard_sd
+
+    dist.barrier()
+    logger.info("Pretrained weights loaded into ZeRO3 model.")
+
+
+# =============================================================================
 # TRAINING
 # =============================================================================
 
@@ -297,29 +375,35 @@ def train_foundation(
         logger.info("Attention: eager (install flash-attn for ~30% speedup)")
 
     # Load model — FULL BF16, no quantization
-    # With ZeRO Stage 3, wrap in deepspeed.zero.Init() so parameters are partitioned
-    # across GPUs *during construction* — avoids materializing the full model on GPU 0.
-    from_pretrained_kwargs = dict(
-        device_map=None,               # REQUIRED for DeepSpeed ZeRO — not "auto"
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
-        attn_implementation=attn_impl,
-    )
     if deepspeed_config:
         import deepspeed
         with open(deepspeed_config) as _f:
             _ds_cfg = json.load(_f)
-        logger.info("Loading model with DeepSpeed ZeRO Init (parameters sharded during construction)...")
-        # low_cpu_mem_usage=True uses a streaming load path that is compatible with
-        # ZeRO3's already-partitioned (size=[0]) parameters; without it from_pretrained
-        # attempts a direct copy_ into the empty shards and raises a size mismatch.
-        with deepspeed.zero.Init(config_dict_or_path=_ds_cfg):
-            model = AutoModelForCausalLM.from_pretrained(
-                base_model, low_cpu_mem_usage=True, **from_pretrained_kwargs
+        # ZeRO Stage 3 loading — two-step to avoid shape-mismatch and meta-tensor errors:
+        #   Step 1: create empty partitioned model structure inside zero.Init()
+        #           (parameters are immediately sharded across GPUs during __init__)
+        #   Step 2: load pretrained weights shard-by-shard using GatheredParameters
+        #           (rank 0 reads each shard file and copies into gathered params;
+        #            zero.Init re-partitions on context exit; other ranks sync via barrier)
+        logger.info("ZeRO3 Step 1: creating empty partitioned model from config...")
+        _model_config = AutoConfig.from_pretrained(base_model, trust_remote_code=True)
+        with deepspeed.zero.Init(config_dict_or_path=_ds_cfg, dtype=torch.bfloat16):
+            model = AutoModelForCausalLM.from_config(
+                _model_config,
+                torch_dtype=torch.bfloat16,
+                attn_implementation=attn_impl,
             )
+        logger.info("ZeRO3 Step 2: loading pretrained weights into partitioned model...")
+        _load_zero3_pretrained_weights(model, base_model, torch.bfloat16)
     else:
         logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
-        model = AutoModelForCausalLM.from_pretrained(base_model, **from_pretrained_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            device_map=None,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            attn_implementation=attn_impl,
+        )
 
     # Gradient checkpointing — mandatory for A100 full FT to avoid OOM
     if config["gradient_checkpointing"]:
