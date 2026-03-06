@@ -171,7 +171,8 @@ pip install --upgrade \
     "numpy==1.26.4" \
     "pandas==2.2.1" \
     "tqdm>=4.65.0" \
-    "pyyaml>=6.0.1"
+    "pyyaml>=6.0.1" \
+    "pymupdf>=1.24.0"
 
 # ── Step 5: Flash Attention 2 (optional but recommended) ─────────────────────
 echo ""
