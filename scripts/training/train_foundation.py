@@ -297,15 +297,24 @@ def train_foundation(
         logger.info("Attention: eager (install flash-attn for ~30% speedup)")
 
     # Load model — FULL BF16, no quantization
-    # device_map must be None for DeepSpeed/torchrun — let the framework place shards
-    logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model,
+    # With ZeRO Stage 3, wrap in deepspeed.zero.Init() so parameters are partitioned
+    # across GPUs *during construction* — avoids materializing the full model on GPU 0.
+    from_pretrained_kwargs = dict(
         device_map=None,               # REQUIRED for DeepSpeed ZeRO — not "auto"
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation=attn_impl,
     )
+    if deepspeed_config:
+        import deepspeed
+        with open(deepspeed_config) as _f:
+            _ds_cfg = json.load(_f)
+        logger.info("Loading model with DeepSpeed ZeRO Init (parameters sharded during construction)...")
+        with deepspeed.zero.Init(config_dict_or_path=_ds_cfg):
+            model = AutoModelForCausalLM.from_pretrained(base_model, **from_pretrained_kwargs)
+    else:
+        logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
+        model = AutoModelForCausalLM.from_pretrained(base_model, **from_pretrained_kwargs)
 
     # Gradient checkpointing — mandatory for A100 full FT to avoid OOM
     if config["gradient_checkpointing"]:
