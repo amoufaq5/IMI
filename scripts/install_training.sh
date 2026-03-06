@@ -151,7 +151,7 @@ echo ""
 echo "[3/7] Installing core training stack..."
 echo "  (transformers, accelerate, peft, trl, bitsandbytes, datasets)"
 
-pip install \
+pip install --upgrade \
     "transformers==4.44.2" \
     "accelerate==0.34.2" \
     "peft==0.12.0" \
@@ -164,7 +164,7 @@ pip install \
 echo ""
 echo "[4/7] Installing tokenization and utility packages..."
 
-pip install \
+pip install --upgrade \
     "sentencepiece==0.1.99" \
     "tokenizers==0.19.1" \
     "einops==0.8.0" \
