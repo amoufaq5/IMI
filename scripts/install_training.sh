@@ -55,7 +55,7 @@ echo "============================================================"
 
 # ── Step 0: Verify Python version ───────────────────────────────────────────
 PYTHON_VERSION=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-echo "[0/6] Python: $PYTHON_VERSION"
+echo "[0/7] Python: $PYTHON_VERSION"
 if [[ "$PYTHON_VERSION" == "3.12" ]]; then
     echo "  WARNING: Python 3.12 has known issues with bitsandbytes."
     echo "  Strongly recommend Python 3.10 or 3.11."
@@ -65,85 +65,106 @@ if [[ "$PYTHON_VERSION" == "3.12" ]]; then
 fi
 
 # ── Step 1: Detect CUDA version ─────────────────────────────────────────────
-echo "[1/6] Detecting CUDA version..."
-if [[ "$CUDA_VERSION" == "auto" ]]; then
-    if ! command -v nvidia-smi &> /dev/null; then
-        echo "  ERROR: nvidia-smi not found. Is an NVIDIA GPU present?"
-        exit 1
-    fi
-    DRIVER_CUDA=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)
-    NVCC_CUDA=$(nvcc --version 2>/dev/null | grep "release" | sed 's/.*release //' | cut -d',' -f1 || echo "unknown")
-    echo "  GPU Driver CUDA: $DRIVER_CUDA"
-    echo "  NVCC CUDA: $NVCC_CUDA"
+echo "[1/7] Detecting CUDA version..."
+if ! command -v nvidia-smi &> /dev/null; then
+    echo "  ERROR: nvidia-smi not found. Is an NVIDIA GPU present?"
+    exit 1
+fi
 
-    # Determine torch CUDA tag
-    if nvcc --version 2>/dev/null | grep -q "12\.1\|12\.2\|12\.3\|12\.4"; then
+# ── Step 2: Install or reuse PyTorch ────────────────────────────────────────
+echo ""
+echo "[2/7] Checking for existing PyTorch installation..."
+echo "  (RunPod pre-installs torch+torchaudio+torchvision as a matched set."
+echo "   Reinstalling torch alone breaks torchaudio/torchvision.)"
+
+TORCH_PREINSTALLED=false
+if python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+    EXISTING_TORCH=$(python -c "import torch; print(torch.__version__)")
+    CUDA_TAG=$(python -c "
+import torch
+v = torch.version.cuda  # e.g. '12.4'
+tag = 'cu' + v.replace('.', '')  # e.g. 'cu124'
+print(tag)
+")
+    echo "  Found pre-installed torch $EXISTING_TORCH with CUDA tag $CUDA_TAG"
+    echo "  CUDA is available — skipping torch install to preserve torchaudio/torchvision."
+    TORCH_PREINSTALLED=true
+else
+    echo "  No working torch+CUDA found. Installing fresh..."
+
+    # Determine CUDA tag
+    if [[ "$CUDA_VERSION" != "auto" ]]; then
+        # Manual override: "12.4" -> "cu124", "11.8" -> "cu118"
+        CUDA_TAG="cu$(echo $CUDA_VERSION | tr -d '.')"
+    elif nvcc --version 2>/dev/null | grep -q "12\.4"; then
+        CUDA_TAG="cu124"
+    elif nvcc --version 2>/dev/null | grep -q "12\.1\|12\.2\|12\.3"; then
         CUDA_TAG="cu121"
-    elif nvcc --version 2>/dev/null | grep -q "12\."; then
-        CUDA_TAG="cu121"  # Use 12.1 wheels for any CUDA 12.x
     elif nvcc --version 2>/dev/null | grep -q "11\.8"; then
         CUDA_TAG="cu118"
     else
-        echo "  WARNING: Could not determine CUDA version from nvcc."
-        echo "  Defaulting to CUDA 12.1 wheels. Override with --cuda 11.8 if needed."
-        CUDA_TAG="cu121"
+        echo "  WARNING: Could not detect CUDA version — defaulting to cu124 (RunPod default)."
+        echo "  Override with: --cuda 12.1 or --cuda 11.8"
+        CUDA_TAG="cu124"
     fi
-else
-    # Manual override: accept "12.1", "11.8", "cu121", "cu118"
-    CUDA_TAG="cu$(echo $CUDA_VERSION | tr -d '.')"
-    # Normalize: "cu121" or "cu118"
-    if [[ "$CUDA_VERSION" == "12."* ]]; then CUDA_TAG="cu121"; fi
-    if [[ "$CUDA_VERSION" == "11.8" ]]; then CUDA_TAG="cu118"; fi
+
+    # Select torch version for the CUDA tag
+    if [[ "$CUDA_TAG" == "cu124" ]]; then
+        TORCH_VER="2.4.1"
+    else
+        TORCH_VER="2.2.0"
+    fi
+
+    TORCH_INDEX="https://download.pytorch.org/whl/${CUDA_TAG}"
+    echo "  Installing torch==${TORCH_VER}+${CUDA_TAG} from $TORCH_INDEX"
+
+    pip install \
+        "torch==${TORCH_VER}" \
+        --index-url "$TORCH_INDEX" \
+        --upgrade
 fi
 
-TORCH_INDEX="https://download.pytorch.org/whl/${CUDA_TAG}"
-echo "  Using PyTorch index: $TORCH_INDEX"
-
-# ── Step 2: Install PyTorch (FIRST — never upgrade this implicitly) ──────────
-echo ""
-echo "[2/6] Installing PyTorch 2.2.0 with CUDA ${CUDA_TAG}..."
-echo "  This sets the CUDA baseline. All other packages must match."
-
-pip install \
-    "torch==2.2.0" \
-    --index-url "$TORCH_INDEX" \
-    --upgrade
-
-# Verify CUDA is accessible
+# Verify CUDA works
 python -c "
 import torch
 print(f'  torch: {torch.__version__}')
 print(f'  CUDA available: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
+    print(f'  GPU count: {torch.cuda.device_count()}')
     print(f'  GPU: {torch.cuda.get_device_name(0)}')
     print(f'  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB')
 "
 
 if ! python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'"; then
-    echo "  ERROR: CUDA is not available after torch install."
-    echo "  Check your CUDA driver and verify --cuda flag matches your system."
+    echo "  ERROR: CUDA is not available."
+    echo "  Check your CUDA driver or override with --cuda <version>."
     exit 1
 fi
 
+# Extract CUDA tag from the installed torch (covers both paths above)
+CUDA_TAG=$(python -c "import torch; print('cu' + torch.version.cuda.replace('.', ''))")
+TORCH_INDEX="https://download.pytorch.org/whl/${CUDA_TAG}"
+echo "  CUDA tag: $CUDA_TAG  |  Index: $TORCH_INDEX"
+
 # ── Step 3: Install core training stack ─────────────────────────────────────
 echo ""
-echo "[3/6] Installing core training stack..."
+echo "[3/7] Installing core training stack..."
 echo "  (transformers, accelerate, peft, trl, bitsandbytes, datasets)"
 
-pip install \
-    "transformers==4.42.0" \
-    "accelerate==0.30.0" \
-    "peft==0.11.1" \
+pip install --upgrade \
+    "transformers==4.44.2" \
+    "accelerate==0.34.2" \
+    "peft==0.12.0" \
     "trl==0.9.6" \
-    "bitsandbytes==0.43.1" \
-    "datasets==2.19.0" \
-    "safetensors==0.4.3"
+    "bitsandbytes==0.44.0" \
+    "datasets==2.21.0" \
+    "safetensors==0.4.5"
 
 # ── Step 4: Install tokenization & utility packages ──────────────────────────
 echo ""
-echo "[4/6] Installing tokenization and utility packages..."
+echo "[4/7] Installing tokenization and utility packages..."
 
-pip install \
+pip install --upgrade \
     "sentencepiece==0.1.99" \
     "tokenizers==0.19.1" \
     "einops==0.8.0" \
@@ -155,10 +176,10 @@ pip install \
 # ── Step 5: Flash Attention 2 (optional but recommended) ─────────────────────
 echo ""
 if [[ "$SKIP_FLASH_ATTN" == true ]]; then
-    echo "[5/6] Skipping flash-attention (--skip-flash specified)."
+    echo "[5/7] Skipping flash-attention (--skip-flash specified)."
     echo "  Training will work without it (~30-50% slower on attention ops)."
 else
-    echo "[5/6] Installing flash-attention 2 (builds from source, may take 5-15 min)..."
+    echo "[5/7] Installing flash-attention 2 (builds from source, may take 5-15 min)..."
     echo "  This speeds up training by ~30-50% on A100/H100."
     echo "  If this fails, re-run with --skip-flash and training will still work."
 

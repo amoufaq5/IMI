@@ -9,23 +9,30 @@
 # Packages must be installed in strict order to avoid breaking CUDA/torch.
 # Use scripts/install_training.sh for a safe, ordered installation.
 #
-# Compatible with: CUDA 12.1, PyTorch 2.2.x
+# Compatible with: CUDA 12.4 + PyTorch 2.4.1 (RunPod default), CUDA 12.1 + PyTorch 2.2.x
 # =============================================================================
 
 # ── STAGE 1: PyTorch — installed via --index-url (see install_training.sh) ───
-# torch==2.2.0+cu121 is NOT listed here — it is installed separately to
-# control the exact wheel source. torchvision/torchaudio not needed.
+# NOT listed here — install_training.sh handles torch separately because:
+#   1. RunPod pre-installs a matched torch+torchaudio+torchvision set.
+#      Overwriting torch alone breaks torchaudio/torchvision.
+#   2. The script detects the existing version and skips reinstall if CUDA works.
+#
+# Default versions installed on a fresh system:
+#   CUDA 12.4 (RunPod default):  torch==2.4.1+cu124
+#   CUDA 12.1:                   torch==2.2.0+cu121
+#   CUDA 11.8:                   torch==2.2.0+cu118
 
 # ── STAGE 2: Core Training Stack ──────────────────────────────────────────────
 # Install AFTER torch: `python -c "import torch; print(torch.cuda.is_available())"`
 
-transformers==4.42.0          # Mixtral model support, SFTTrainer compat
-accelerate==0.30.0            # Multi-GPU / mixed precision wrapper
-peft==0.11.1                  # LoRA adapters — ADAPTER TRAINING only, not foundation
+transformers==4.44.2          # Mixtral model support, SFTTrainer compat (torch 2.4.x compat)
+accelerate==0.34.2            # Multi-GPU / mixed precision wrapper (torch 2.4.x compat)
+peft==0.12.0                  # LoRA adapters — ADAPTER TRAINING only, not foundation
 trl==0.9.6                    # SFTTrainer — DO NOT upgrade past 0.9.x without testing
-bitsandbytes==0.43.1          # 4-bit NF4 (QLoRA) — ADAPTER TRAINING only, CUDA sensitive
-datasets==2.19.0              # HuggingFace datasets loader
-safetensors==0.4.3            # Fast model checkpoint format
+bitsandbytes==0.44.0          # 4-bit NF4 (QLoRA) — ADAPTER TRAINING only; 0.44.0 for torch 2.4.x
+datasets==2.21.0              # HuggingFace datasets loader
+safetensors==0.4.5            # Fast model checkpoint format
 
 # ── STAGE 3: Tokenization & Utilities ─────────────────────────────────────────
 sentencepiece==0.1.99         # Mixtral tokenizer (required)
