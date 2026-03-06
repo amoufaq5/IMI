@@ -1,0 +1,51 @@
+{
+  "_comment": "DeepSpeed ZeRO Stage 3 — tuned for 8× A100 80GB, Mixtral 8x7B full fine-tuning",
+
+  "zero_optimization": {
+    "stage": 3,
+
+    "_comment_stage3": "Stage 3 shards model params + gradients + optimizer states across all GPUs.",
+
+    "overlap_comm": true,
+    "contiguous_gradients": true,
+    "sub_group_size": 1e9,
+    "reduce_bucket_size": "auto",
+    "stage3_prefetch_bucket_size": "auto",
+    "stage3_param_persistence_threshold": "auto",
+    "stage3_max_live_parameters": 1e9,
+    "stage3_max_reuse_distance": 1e9,
+
+    "offload_optimizer": {
+      "device": "none",
+      "_comment": "CPU offload disabled — 8× A100 has enough combined VRAM (640 GB).",
+      "_comment2": "Enable with device=cpu only if you run on fewer GPUs and hit OOM."
+    },
+
+    "offload_param": {
+      "device": "none",
+      "_comment": "Param CPU offload disabled — would halve training speed unnecessarily."
+    }
+  },
+
+  "bf16": {
+    "enabled": true
+  },
+
+  "fp16": {
+    "enabled": false
+  },
+
+  "gradient_clipping": 1.0,
+
+  "train_micro_batch_size_per_gpu": 4,
+  "gradient_accumulation_steps": 4,
+
+  "steps_per_print": 10,
+  "wall_clock_breakdown": false,
+
+  "comms_logger": {
+    "enabled": false
+  },
+
+  "_usage": "torchrun --nproc_per_node=8 scripts/training/train_foundation.py --deepspeed configs/deepspeed_zero3.json"
+}

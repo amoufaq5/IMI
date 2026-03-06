@@ -1,60 +1,83 @@
 # =============================================================================
-# requirements-training.txt — Mixtral 8x7B QLoRA Medical Fine-tuning
+# requirements-training.txt — Mixtral 8x7B Medical Training
+# Covers both:
+#   (A) Foundation Training  — full fine-tuning, 8× A100 80GB, DeepSpeed ZeRO-3
+#   (B) Adapter Training     — QLoRA, single A100 80GB, no DeepSpeed
 # =============================================================================
 #
-# WARNING: DO NOT install this file with a single `pip install -r`.
+# WARNING: DO NOT run `pip install -r requirements-training.txt` directly.
 # Packages must be installed in strict order to avoid breaking CUDA/torch.
 # Use scripts/install_training.sh for a safe, ordered installation.
 #
 # Compatible with: CUDA 12.1, PyTorch 2.2.x
-# Tested on:       A100 40GB, A100 80GB, H100 80GB
 # =============================================================================
 
-# ── STAGE 1: PyTorch (install manually first — see install_training.sh) ───────
-# torch==2.2.0+cu121   is installed via --index-url, NOT listed here
-# torchvision and torchaudio are NOT needed for text-only training
+# ── STAGE 1: PyTorch — installed via --index-url (see install_training.sh) ───
+# torch==2.2.0+cu121 is NOT listed here — it is installed separately to
+# control the exact wheel source. torchvision/torchaudio not needed.
 
 # ── STAGE 2: Core Training Stack ──────────────────────────────────────────────
-# Install these AFTER torch is verified: `python -c "import torch; print(torch.cuda.is_available())"`
+# Install AFTER torch: `python -c "import torch; print(torch.cuda.is_available())"`
 
 transformers==4.42.0          # Mixtral model support, SFTTrainer compat
-accelerate==0.30.0             # Multi-GPU / mixed precision wrapper
-peft==0.11.1                   # LoRA / QLoRA adapters
-trl==0.9.6                     # SFTTrainer — DO NOT upgrade past 0.9.x without testing
-bitsandbytes==0.43.1           # 4-bit NF4 quantization (QLoRA) — CUDA version sensitive
-datasets==2.19.0               # HuggingFace datasets loader
-safetensors==0.4.3             # Fast model checkpoint format
+accelerate==0.30.0            # Multi-GPU / mixed precision wrapper
+peft==0.11.1                  # LoRA adapters — ADAPTER TRAINING only, not foundation
+trl==0.9.6                    # SFTTrainer — DO NOT upgrade past 0.9.x without testing
+bitsandbytes==0.43.1          # 4-bit NF4 (QLoRA) — ADAPTER TRAINING only, CUDA sensitive
+datasets==2.19.0              # HuggingFace datasets loader
+safetensors==0.4.3            # Fast model checkpoint format
 
 # ── STAGE 3: Tokenization & Utilities ─────────────────────────────────────────
-sentencepiece==0.1.99          # Mixtral tokenizer (required)
-tokenizers==0.19.1             # Fast tokenizers
-einops==0.8.0                  # Tensor rearrangement ops used by Mixtral attention
-numpy==1.26.4                  # Must stay <2.0 for PyTorch 2.2 compatibility
-pandas==2.2.1                  # Data manipulation
-tqdm>=4.65.0                   # Progress bars
-pyyaml>=6.0.1                  # Config file support
+sentencepiece==0.1.99         # Mixtral tokenizer (required)
+tokenizers==0.19.1            # Fast tokenizers
+einops==0.8.0                 # Tensor rearrangement ops used by Mixtral attention
+numpy==1.26.4                 # Must stay <2.0 for PyTorch 2.2 compatibility
+pandas==2.2.1                 # Data manipulation
+tqdm>=4.65.0                  # Progress bars
+pyyaml>=6.0.1                 # Config file support
+packaging>=23.0               # Required by accelerate and deepspeed
 
-# ── STAGE 4: Optional — Install LAST, manually (build from source) ───────────
-# flash-attn: speeds up training ~30-50% but MUST match torch+CUDA exactly.
-# Install ONLY after confirming torch version:
+# ── STAGE 4: DeepSpeed — FOUNDATION TRAINING only (8× A100) ──────────────────
+# Required for ZeRO Stage 3 sharding across 8 GPUs.
+# NOT needed for adapter training (single GPU QLoRA).
+#
+# DeepSpeed builds CUDA kernels on install. Install AFTER torch is verified:
+#   pip install deepspeed==0.14.0
+#
+# Requires: gcc, g++, ninja, CUDA toolkit headers matching your driver.
+# On RunPod / Lambda these are pre-installed. Verify with:
+#   ds_report   (run after install to check which ops compiled successfully)
+#
+# If deepspeed install fails:
+#   apt-get install -y ninja-build build-essential
+#   DS_BUILD_CPU_ADAM=1 pip install deepspeed==0.14.0
+ninja>=1.11.1                 # C++ build tool — required for DeepSpeed CUDA kernels
+
+# ── STAGE 5: Flash Attention — install LAST, build from source ───────────────
+# Speeds up training ~30–50% on A100/H100.
+# Must exactly match torch + CUDA version. Training works without it.
+#
+# Install with:
 #   pip install flash-attn==2.5.9 --no-build-isolation
 #
-# wandb: experiment tracking (optional but recommended for long runs)
+# If build fails, re-run install_training.sh with --skip-flash
+
+# ── STAGE 6: Optional extras ─────────────────────────────────────────────────
+# wandb>=0.16.0               # Experiment tracking — recommended for long runs
 #   pip install wandb>=0.16.0
 
-# ── EXPLICITLY EXCLUDED (these break the training CUDA stack) ─────────────────
-# vllm       — Inference server, pins torch to its own version → CONFLICT
-# deepspeed  — Complex CUDA kernel build, often breaks on fresh installs
-# langchain  — Not needed for training
-# langgraph  — Not needed for training
-# chromadb   — Not needed for training
-# faiss-cpu  — Use faiss-gpu if needed; faiss-cpu causes CPU fallback during training
-# pydicom    — Medical imaging, not needed for text training
-# nibabel    — Neuroimaging, not needed for text training
-# opencv-python — Computer vision, not needed for text training
-# neo4j      — Production database, not needed for training
-# redis      — Caching server, not needed for training
-# asyncpg    — PostgreSQL async driver, not needed for training
-# opentelemetry-* — Monitoring, not needed for training
-# prometheus-client — Monitoring, not needed for training
-# shap       — Explainability, not needed for training
+# ── EXPLICITLY EXCLUDED (break the training CUDA stack) ──────────────────────
+# vllm          — inference server, pins its own torch version → CONFLICT
+# langchain     — not needed for training
+# langgraph     — not needed for training
+# chromadb      — vector DB, not needed for training
+# faiss-cpu     — causes CPU fallback; use faiss-gpu only if explicitly needed
+# pydicom       — medical imaging, irrelevant for text training
+# nibabel       — neuroimaging, irrelevant for text training
+# opencv-python — computer vision, irrelevant for text training
+# neo4j         — production graph DB, not needed for training
+# redis         — caching server, not needed for training
+# asyncpg       — PostgreSQL async driver, not needed for training
+# opentelemetry-* — monitoring stack, not needed for training
+# prometheus-client — monitoring, not needed for training
+# shap          — explainability, not needed for training
