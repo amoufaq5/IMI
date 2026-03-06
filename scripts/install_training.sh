@@ -55,7 +55,7 @@ echo "============================================================"
 
 # ── Step 0: Verify Python version ───────────────────────────────────────────
 PYTHON_VERSION=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-echo "[0/6] Python: $PYTHON_VERSION"
+echo "[0/7] Python: $PYTHON_VERSION"
 if [[ "$PYTHON_VERSION" == "3.12" ]]; then
     echo "  WARNING: Python 3.12 has known issues with bitsandbytes."
     echo "  Strongly recommend Python 3.10 or 3.11."
@@ -65,7 +65,7 @@ if [[ "$PYTHON_VERSION" == "3.12" ]]; then
 fi
 
 # ── Step 1: Detect CUDA version ─────────────────────────────────────────────
-echo "[1/6] Detecting CUDA version..."
+echo "[1/7] Detecting CUDA version..."
 if ! command -v nvidia-smi &> /dev/null; then
     echo "  ERROR: nvidia-smi not found. Is an NVIDIA GPU present?"
     exit 1
@@ -73,7 +73,7 @@ fi
 
 # ── Step 2: Install or reuse PyTorch ────────────────────────────────────────
 echo ""
-echo "[2/6] Checking for existing PyTorch installation..."
+echo "[2/7] Checking for existing PyTorch installation..."
 echo "  (RunPod pre-installs torch+torchaudio+torchvision as a matched set."
 echo "   Reinstalling torch alone breaks torchaudio/torchvision.)"
 
@@ -148,7 +148,7 @@ echo "  CUDA tag: $CUDA_TAG  |  Index: $TORCH_INDEX"
 
 # ── Step 3: Install core training stack ─────────────────────────────────────
 echo ""
-echo "[3/6] Installing core training stack..."
+echo "[3/7] Installing core training stack..."
 echo "  (transformers, accelerate, peft, trl, bitsandbytes, datasets)"
 
 pip install \
@@ -162,7 +162,7 @@ pip install \
 
 # ── Step 4: Install tokenization & utility packages ──────────────────────────
 echo ""
-echo "[4/6] Installing tokenization and utility packages..."
+echo "[4/7] Installing tokenization and utility packages..."
 
 pip install \
     "sentencepiece==0.1.99" \
@@ -176,10 +176,10 @@ pip install \
 # ── Step 5: Flash Attention 2 (optional but recommended) ─────────────────────
 echo ""
 if [[ "$SKIP_FLASH_ATTN" == true ]]; then
-    echo "[5/6] Skipping flash-attention (--skip-flash specified)."
+    echo "[5/7] Skipping flash-attention (--skip-flash specified)."
     echo "  Training will work without it (~30-50% slower on attention ops)."
 else
-    echo "[5/6] Installing flash-attention 2 (builds from source, may take 5-15 min)..."
+    echo "[5/7] Installing flash-attention 2 (builds from source, may take 5-15 min)..."
     echo "  This speeds up training by ~30-50% on A100/H100."
     echo "  If this fails, re-run with --skip-flash and training will still work."
 
