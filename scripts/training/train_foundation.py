@@ -310,8 +310,13 @@ def train_foundation(
         with open(deepspeed_config) as _f:
             _ds_cfg = json.load(_f)
         logger.info("Loading model with DeepSpeed ZeRO Init (parameters sharded during construction)...")
+        # low_cpu_mem_usage=True uses a streaming load path that is compatible with
+        # ZeRO3's already-partitioned (size=[0]) parameters; without it from_pretrained
+        # attempts a direct copy_ into the empty shards and raises a size mismatch.
         with deepspeed.zero.Init(config_dict_or_path=_ds_cfg):
-            model = AutoModelForCausalLM.from_pretrained(base_model, **from_pretrained_kwargs)
+            model = AutoModelForCausalLM.from_pretrained(
+                base_model, low_cpu_mem_usage=True, **from_pretrained_kwargs
+            )
     else:
         logger.info("Loading model in BFloat16 (full parameters, no quantization)...")
         model = AutoModelForCausalLM.from_pretrained(base_model, **from_pretrained_kwargs)
