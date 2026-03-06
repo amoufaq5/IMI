@@ -294,7 +294,14 @@ def _load_zero3_pretrained_weights(model: torch.nn.Module, model_name: str, dtyp
         # lets us copy checkpoint data in, then re-partitions on __exit__.
         with deepspeed.zero.GatheredParameters(params_to_gather, modifier_rank=0):
             if dist.get_rank() == 0:
+                # If local_path came from the HF cache, the shard may not have been
+                # downloaded yet — use cached_file so it is fetched on demand.
                 shard_path = local_path / shard_filename
+                if not shard_path.exists():
+                    from transformers.utils import cached_file as _cached_file
+                    _resolved = _cached_file(model_name, shard_filename,
+                                             _raise_exceptions_for_missing_entries=True)
+                    shard_path = Path(_resolved)
                 if shard_path.suffix == ".safetensors":
                     from safetensors.torch import load_file as _sf_load
                     shard_sd = _sf_load(str(shard_path), device="cpu")
