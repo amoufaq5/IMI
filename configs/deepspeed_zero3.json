@@ -3,7 +3,7 @@
     "stage": 3,
     "overlap_comm": true,
     "contiguous_gradients": true,
-    "sub_group_size": 1e9,
+    "sub_group_size": 1e8,
     "reduce_bucket_size": "auto",
     "stage3_prefetch_bucket_size": "auto",
     "stage3_param_persistence_threshold": "auto",
@@ -11,11 +11,13 @@
     "stage3_max_reuse_distance": 1e9,
 
     "offload_optimizer": {
-      "device": "none"
+      "device": "cpu",
+      "pin_memory": true
     },
 
     "offload_param": {
-      "device": "none"
+      "device": "cpu",
+      "pin_memory": true
     }
   },
 
