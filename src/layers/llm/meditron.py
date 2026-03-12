@@ -304,6 +304,77 @@ class MixtralMedicalModel:
         
         return embeddings
     
+    def generate_with_consistency(
+        self,
+        prompt: str,
+        n: int = 5,
+        temperature: float = 0.4,
+        max_new_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Self-consistency decoding for high-stakes medical queries.
+
+        Generates n independent responses at temperature > 0 and returns the
+        most representative one via majority-vote on urgency/recommendation label.
+
+        Intended for EMERGENCY and URGENT triage queries only, where a single
+        stochastic decode could miss a critical flag. By generating multiple
+        independent samples and voting, we reduce the chance of a false-negative
+        on life-threatening conditions.
+
+        Vote strategy:
+          - Extract the first capital-letter urgency label from each response
+            (EMERGENCY, URGENT, SEMI_URGENT, ROUTINE, SELF_CARE).
+          - If any vote is EMERGENCY, return the response that voted EMERGENCY
+            (conservative: always surface the most critical finding).
+          - Otherwise return the response with the most common label.
+          - Tie-break: return the first response.
+
+        Args:
+            prompt: The fully-formatted prompt string.
+            n: Number of independent samples (default 5).
+            temperature: Sampling temperature (default 0.4 — diverse but coherent).
+            max_new_tokens: Max tokens per sample (default: model default).
+
+        Returns:
+            Single best response string.
+        """
+        import re
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        _URGENCY_LABELS = ["EMERGENCY", "URGENT", "SEMI_URGENT", "ROUTINE", "SELF_CARE"]
+        _URGENCY_PATTERN = re.compile(r"\b(EMERGENCY|URGENT|SEMI_URGENT|ROUTINE|SELF_CARE)\b")
+
+        responses: List[str] = []
+        labels: List[str] = []
+
+        for _ in range(n):
+            response = self.generate(
+                prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            responses.append(response)
+            match = _URGENCY_PATTERN.search(response.upper())
+            labels.append(match.group(1) if match else "UNKNOWN")
+
+        # Conservative vote: if any sample says EMERGENCY, surface it
+        if "EMERGENCY" in labels:
+            idx = labels.index("EMERGENCY")
+            logger.info(f"Self-consistency: EMERGENCY detected in {labels.count('EMERGENCY')}/{n} samples")
+            return responses[idx]
+
+        # Otherwise majority vote
+        from collections import Counter
+        most_common_label, _ = Counter(labels).most_common(1)[0]
+        for response, label in zip(responses, labels):
+            if label == most_common_label:
+                logger.info(f"Self-consistency: majority label={most_common_label} ({labels.count(most_common_label)}/{n})")
+                return response
+
+        return responses[0]
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text"""
         return len(self.tokenizer.encode(text))

@@ -145,6 +145,12 @@ class LLMService:
         
         return "\n".join(parts)
     
+    def _build_kg_context(self, kg_results: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        """Format KG query results as a grounding context string for the LLM prompt."""
+        if not kg_results:
+            return None
+        return ConversationFormatter.format_knowledge_graph_context(kg_results)
+
     async def generate(
         self,
         query: str,
@@ -153,33 +159,49 @@ class LLMService:
         chat_history: Optional[List[Dict[str, str]]] = None,
         knowledge_context: Optional[str] = None,
         safety_context: Optional[str] = None,
+        kg_results: Optional[List[Dict[str, Any]]] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         user_id: Optional[str] = None,
     ) -> LLMResponse:
-        """Generate a response from the LLM"""
+        """Generate a response from the LLM.
+
+        Args:
+            kg_results: Optional list of Knowledge Graph query results. When provided,
+                        relevant facts are injected into the prompt as grounding context
+                        before generation — reducing hallucination on factual claims.
+        """
         if not self._initialized:
             await self.initialize()
-        
+
         start_time = time.time()
-        
+
         adapter = self._select_adapter(query, role)
-        
+
+        # Merge KG context into knowledge_context if provided
+        kg_context_str = self._build_kg_context(kg_results)
+        if kg_context_str and knowledge_context:
+            merged_knowledge = f"{kg_context_str}\n\n---\n\n{knowledge_context}"
+        elif kg_context_str:
+            merged_knowledge = kg_context_str
+        else:
+            merged_knowledge = knowledge_context
+
         prompt = self._build_prompt(
             query=query,
             role=role,
             context=context,
             chat_history=chat_history,
-            knowledge_context=knowledge_context,
+            knowledge_context=merged_knowledge,
             safety_context=safety_context,
         )
-        
+
         content = self.model.generate(
             prompt=prompt,
             max_new_tokens=max_tokens,
             temperature=temperature,
         )
-        
+
         latency_ms = (time.time() - start_time) * 1000
         tokens_used = self.model.count_tokens(prompt) + self.model.count_tokens(content)
         

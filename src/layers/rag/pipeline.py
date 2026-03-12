@@ -4,11 +4,19 @@ RAG Pipeline for IMI Medical Platform
 Retrieval Augmented Generation pipeline that:
 1. Ingests medical documents (PDFs, guidelines, literature)
 2. Chunks and embeds documents
-3. Retrieves relevant context for queries
-4. Augments LLM prompts with retrieved knowledge
+3. Retrieves relevant context via hybrid search (BM25 + dense vectors)
+4. Re-ranks top candidates with a cross-encoder
+5. Augments LLM prompts with retrieved knowledge
+
+Hybrid retrieval strategy:
+- Dense retrieval: semantic similarity via sentence-transformers embeddings
+- BM25 retrieval: keyword overlap — critical for medical terminology, drug names, ICD codes
+- Reciprocal Rank Fusion (RRF): merges both ranked lists without requiring score normalization
+- Cross-encoder re-ranking: selects top-5 from merged top-20 using a fine-grained relevance model
 """
 import logging
-from typing import List, Dict, Any, Optional
+import math
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 import hashlib
@@ -18,6 +26,30 @@ from .embeddings import EmbeddingService, get_embedding_service
 from .vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# BM25 retriever (pure-Python, no extra server required)
+# Falls back gracefully when rank_bm25 is not installed.
+# ---------------------------------------------------------------------------
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25_AVAILABLE = False
+    logger.warning("rank_bm25 not installed — BM25 hybrid search disabled. "
+                   "Install with: pip install rank-bm25")
+
+# ---------------------------------------------------------------------------
+# Cross-encoder re-ranker
+# Falls back gracefully when sentence-transformers is not installed.
+# ---------------------------------------------------------------------------
+try:
+    from sentence_transformers import CrossEncoder
+    CROSS_ENCODER_AVAILABLE = True
+except ImportError:
+    CROSS_ENCODER_AVAILABLE = False
+    logger.warning("sentence-transformers not installed — cross-encoder re-ranking disabled. "
+                   "Install with: pip install sentence-transformers")
 
 
 @dataclass
@@ -54,15 +86,19 @@ class Document:
 class RAGPipeline:
     """
     RAG Pipeline for medical knowledge retrieval
-    
+
     Features:
     - Document ingestion with chunking
-    - Semantic search with embeddings
-    - Source attribution
+    - Hybrid search: BM25 (keyword) + dense embeddings (semantic)
+    - Reciprocal Rank Fusion to merge retrieval lists
+    - Cross-encoder re-ranking of top-20 → top-5
+    - Source attribution and citation support
     - Medical-specific preprocessing
-    - Hybrid search (semantic + keyword)
     """
-    
+
+    # Cross-encoder model — lightweight (22M params), fast on CPU
+    CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
     def __init__(
         self,
         embedding_service: Optional[EmbeddingService] = None,
@@ -71,6 +107,10 @@ class RAGPipeline:
         chunk_overlap: int = 50,
         top_k: int = 5,
         min_relevance_score: float = 0.5,
+        use_hybrid: bool = True,
+        use_reranker: bool = True,
+        rrf_k: int = 60,
+        rerank_top_n: int = 20,
     ):
         self.embeddings = embedding_service or get_embedding_service()
         self.vector_store = vector_store or get_vector_store()
@@ -78,7 +118,20 @@ class RAGPipeline:
         self.chunk_overlap = chunk_overlap
         self.top_k = top_k
         self.min_relevance_score = min_relevance_score
-        
+        self.use_hybrid = use_hybrid and BM25_AVAILABLE
+        self.use_reranker = use_reranker and CROSS_ENCODER_AVAILABLE
+        self.rrf_k = rrf_k
+        self.rerank_top_n = rerank_top_n
+
+        # BM25 index — rebuilt on each ingest_* call
+        self._bm25_corpus: List[str] = []
+        self._bm25_ids: List[str] = []
+        self._bm25_metadatas: List[Dict[str, Any]] = []
+        self._bm25_index: Optional[Any] = None  # BM25Okapi instance
+
+        # Cross-encoder — lazy-loaded on first rerank call
+        self._cross_encoder: Optional[Any] = None
+
         # Document type handlers
         self.doc_handlers = {
             "pdf": self._process_pdf,
@@ -156,7 +209,15 @@ class RAGPipeline:
             metadatas=metadatas,
             ids=ids,
         )
-        
+
+        # Update BM25 index
+        if self.use_hybrid:
+            for chunk, meta, doc_id in zip(documents, metadatas, ids):
+                self._bm25_corpus.append(chunk)
+                self._bm25_ids.append(doc_id)
+                self._bm25_metadatas.append(meta)
+            self._rebuild_bm25_index()
+
         logger.info(f"Ingested {len(chunks)} chunks from {source}")
         return len(chunks)
     
@@ -248,41 +309,142 @@ class RAGPipeline:
         filter_metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve relevant documents for a query
-        
+        Retrieve relevant documents using hybrid search + cross-encoder re-ranking.
+
+        Pipeline:
+          1. Dense retrieval (semantic embeddings) — top rerank_top_n candidates
+          2. BM25 retrieval (keyword) — top rerank_top_n candidates [if available]
+          3. RRF merge of both ranked lists
+          4. Cross-encoder re-ranking of merged list → final top_k [if available]
+          5. Fallback: dense-only if BM25/reranker unavailable
+
         Args:
             query: User query
             patient_context: Optional patient context for query expansion
             top_k: Number of results (default: self.top_k)
             filter_metadata: Optional metadata filter
-            
+
         Returns:
-            List of relevant documents with scores
+            List of relevant documents with scores, ranked by relevance
         """
         top_k = top_k or self.top_k
-        
-        # Expand query with patient context
         expanded_query = self._expand_query(query, patient_context)
-        
-        # Generate query embedding
+
+        # ── Step 1: Dense retrieval ──────────────────────────────────────────
         query_embedding = self.embeddings.embed_query(expanded_query)
-        
-        # Search vector store
-        results = self.vector_store.search(
+        dense_results = self.vector_store.search(
             query_embedding=query_embedding,
-            top_k=top_k * 2,  # Get more, then filter
+            top_k=self.rerank_top_n,
             filter_metadata=filter_metadata,
         )
-        
-        # Filter by relevance score
-        filtered_results = [
-            r for r in results 
-            if r["score"] >= self.min_relevance_score
-        ][:top_k]
-        
-        logger.info(f"Retrieved {len(filtered_results)} documents for query")
-        
-        return filtered_results
+
+        # ── Step 2 + 3: BM25 + RRF merge ────────────────────────────────────
+        if self.use_hybrid and self._bm25_index is not None:
+            bm25_results = self._bm25_search(expanded_query, top_k=self.rerank_top_n)
+            merged = self._reciprocal_rank_fusion([dense_results, bm25_results])
+        else:
+            merged = dense_results
+
+        # Filter by minimum relevance score before re-ranking
+        merged = [r for r in merged if r.get("score", 1.0) >= self.min_relevance_score]
+
+        if not merged:
+            logger.info("Retrieved 0 documents after relevance filtering")
+            return []
+
+        # ── Step 4: Cross-encoder re-ranking ────────────────────────────────
+        if self.use_reranker and len(merged) > top_k:
+            final = self._rerank(query, merged, top_k)
+        else:
+            final = merged[:top_k]
+
+        logger.info(f"Retrieved {len(final)} documents (hybrid={self.use_hybrid}, "
+                    f"reranker={self.use_reranker})")
+        return final
+
+    # =========================================================================
+    # HYBRID SEARCH HELPERS
+    # =========================================================================
+
+    def _rebuild_bm25_index(self) -> None:
+        """Rebuild BM25 index from current corpus."""
+        if not BM25_AVAILABLE or not self._bm25_corpus:
+            return
+        tokenized = [doc.lower().split() for doc in self._bm25_corpus]
+        self._bm25_index = BM25Okapi(tokenized)
+
+    def _bm25_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Run BM25 keyword search and return results in standard format."""
+        if self._bm25_index is None:
+            return []
+        tokenized_query = query.lower().split()
+        scores = self._bm25_index.get_scores(tokenized_query)
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        results = []
+        for idx in top_indices:
+            if scores[idx] > 0:
+                results.append({
+                    "id": self._bm25_ids[idx],
+                    "document": self._bm25_corpus[idx],
+                    "metadata": self._bm25_metadatas[idx],
+                    "score": float(scores[idx]),
+                    "retrieval_method": "bm25",
+                })
+        return results
+
+    def _reciprocal_rank_fusion(
+        self,
+        ranked_lists: List[List[Dict[str, Any]]],
+        k: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge multiple ranked lists using Reciprocal Rank Fusion.
+
+        RRF score = sum(1 / (rank + k)) across all lists.
+        k=60 is the standard default from the original RRF paper.
+        """
+        k = k or self.rrf_k
+        rrf_scores: Dict[str, float] = {}
+        doc_store: Dict[str, Dict[str, Any]] = {}
+
+        for ranked_list in ranked_lists:
+            for rank, doc in enumerate(ranked_list):
+                doc_id = doc.get("id", doc.get("document", "")[:32])
+                rrf_scores[doc_id] = rrf_scores.get(doc_id, 0.0) + 1.0 / (rank + k)
+                if doc_id not in doc_store:
+                    doc_store[doc_id] = doc
+
+        sorted_ids = sorted(rrf_scores, key=lambda x: rrf_scores[x], reverse=True)
+        merged = []
+        for doc_id in sorted_ids:
+            doc = dict(doc_store[doc_id])
+            doc["score"] = rrf_scores[doc_id]
+            doc["retrieval_method"] = "rrf_hybrid"
+            merged.append(doc)
+        return merged
+
+    def _rerank(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """Re-rank candidate documents using a cross-encoder model."""
+        if not CROSS_ENCODER_AVAILABLE:
+            return candidates[:top_k]
+
+        if self._cross_encoder is None:
+            logger.info(f"Loading cross-encoder: {self.CROSS_ENCODER_MODEL}")
+            self._cross_encoder = CrossEncoder(self.CROSS_ENCODER_MODEL)
+
+        pairs = [(query, doc["document"]) for doc in candidates]
+        scores = self._cross_encoder.predict(pairs)
+
+        for doc, score in zip(candidates, scores):
+            doc["rerank_score"] = float(score)
+
+        reranked = sorted(candidates, key=lambda d: d.get("rerank_score", 0.0), reverse=True)
+        return reranked[:top_k]
     
     def retrieve_with_context(
         self,
