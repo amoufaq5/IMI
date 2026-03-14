@@ -40,6 +40,7 @@ opencv-python>=4.9.0.80
 # Vector Database & Embeddings
 chromadb>=0.4.22
 sentence-transformers>=2.2.2
+rank-bm25>=0.2.2
 faiss-cpu>=1.7.4
 
 # Security & HIPAA Compliance
