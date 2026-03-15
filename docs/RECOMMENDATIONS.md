@@ -119,8 +119,9 @@ Set up production monitoring:
 
 | Phase | Cost | Timeline |
 |-------|------|----------|
-| MVP (Doctor + Patient, Mistral 7B) | ~$15–20 | 1 week |
-| Full 6-adapter training | ~$35–50 | 1 week |
+| Foundation full FT (8× A100 80GB, 5M corpus) | ~$30 | ~3 hrs |
+| ORPO alignment + 6 LoRA adapters (A100 40GB) | ~$5 | ~3 hrs |
+| Full training pipeline | ~$35 | 1 day |
 | Red-teaming + safety expansion | ~$50 | 3 days |
 | Production inference (monthly, 1× A100 40GB) | ~$500–800/mo | Ongoing |
 | Continuous learning pipeline | ~$50/quarter | Quarterly |
@@ -143,9 +144,9 @@ Set up production monitoring:
 | Alignment method | — | ORPO (no reference model → saves ~14GB GPU) |
 | Inference | Direct HF transformers | vLLM with LoRA hot-swapping |
 | Datasets | ~6 datasets | 100+ datasets (~4–5M clean examples) |
-| Min training GPU | A100 40GB | A100 40GB (or RTX 3090 for QLoRA) |
-| Foundation training GPU | 8× A100 80GB | 1× A100 80GB + CPU offload |
-| Foundation training cost | ~$1,500 | ~$4–24 |
-| Full MVP cost | ~$5,000 | **~$35–50** |
+| Adapter training GPU | A100 40GB | A100 40GB (or RTX 3090 for QLoRA) |
+| Foundation training GPU | — | **8× A100 80GB**, ZeRO-3 |
+| Foundation training cost | ~$1,500 | ~$30 (5M corpus, 3 epochs) |
+| Full pipeline cost | ~$5,000 | **~$35** |
 | Evaluation | Basic metrics | 9 metrics with pass/fail thresholds |
 | Compute dtype | float16 | bfloat16 |
