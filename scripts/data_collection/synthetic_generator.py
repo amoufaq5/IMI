@@ -1264,26 +1264,7 @@ Provide differential diagnosis and recommended workup."""
                 logger.info(f"  Generated {i + 1}/{num_examples} examples")
 
         return datasets
-                example = self.generate_triage_training_example()
-                datasets["patient_triage"].append(example)
-            elif r < distribution["triage"] + distribution["interaction"]:
-                example = self.generate_drug_interaction_example()
-                datasets["clinical_pharmacist"].append(example)
-            elif r < distribution["triage"] + distribution["interaction"] + distribution["clinical"]:
-                example = self.generate_clinical_case()
-                datasets["clinical_decision"].append(example)
-            elif r < distribution["triage"] + distribution["interaction"] + distribution["clinical"] + distribution["usmle"]:
-                example = self.generate_usmle_question()
-                datasets["education"].append(example)
-            else:
-                example = self.generate_regulatory_scenario()
-                datasets["regulatory_qa"].append(example)
-            
-            if (i + 1) % 100 == 0:
-                logger.info(f"  Generated {i + 1}/{num_examples} examples")
-        
-        return datasets
-    
+
     def save_datasets(self, datasets: Dict[str, List[Dict]]):
         """Save generated datasets"""
         for adapter, examples in datasets.items():
