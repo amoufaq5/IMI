@@ -158,7 +158,9 @@ class NCBIClient:
         time.sleep(self._delay)
         r = self.session.get(url, params=params, timeout=30)
         r.raise_for_status()
-        return r.json()
+        # NCBI occasionally returns JSON with unescaped control characters
+        # (e.g. in article titles/abstracts). strict=False tolerates them.
+        return json.loads(r.text, strict=False)
 
     def _get_xml(self, endpoint: str, params: dict) -> str:
         url = self.BASE + endpoint
