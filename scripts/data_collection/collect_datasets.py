@@ -48,7 +48,7 @@ class DatasetConfig:
     adapter_type: str  # Which adapter this data is for
     hf_id: Optional[str] = None  # HuggingFace dataset ID (e.g. "bigbio/med_qa")
     hf_subset: Optional[str] = None  # HuggingFace subset/config name
-    hf_split: str = "train"  # Which split to download
+    hf_split: str = "train"  # Kept for reference; all splits are fetched automatically
     url: Optional[str] = None  # Direct URL fallback
     format: str = "json"  # json, jsonl, csv, zip, tar.gz
     processing_fn: Optional[str] = None
@@ -253,12 +253,19 @@ class DatasetCollector:
         # Method 1: HuggingFace datasets library (preferred)
         if config.hf_id and HF_DATASETS_AVAILABLE:
             try:
-                logger.info(f"  Loading from HF: {config.hf_id} (subset={config.hf_subset}, split={config.hf_split})")
+                from datasets import concatenate_datasets
+                logger.info(f"  Loading from HF: {config.hf_id} (subset={config.hf_subset}, all splits)")
+                load_kwargs = dict(trust_remote_code=True)
                 if config.hf_subset:
-                    ds = load_dataset(config.hf_id, config.hf_subset, split=config.hf_split, trust_remote_code=True)
+                    dataset_dict = load_dataset(config.hf_id, config.hf_subset, **load_kwargs)
                 else:
-                    ds = load_dataset(config.hf_id, split=config.hf_split, trust_remote_code=True)
-                
+                    dataset_dict = load_dataset(config.hf_id, **load_kwargs)
+
+                # Concatenate every split (train + validation + test + …)
+                splits = list(dataset_dict.keys())
+                ds = concatenate_datasets([dataset_dict[s] for s in splits])
+                logger.info(f"  Splits concatenated: {splits} → {len(ds)} total examples")
+
                 # Convert to list of dicts and save as JSON
                 data = [dict(row) for row in ds]
                 with open(dest_path, 'w') as f:
