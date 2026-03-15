@@ -3,10 +3,10 @@
 # install_training.sh — Safe CUDA-aware training environment setup
 # =============================================================================
 #
-# Installs the Mixtral 8x7B training stack in the correct order.
+# Installs the Mistral 7B training stack in the correct order.
 # Covers both:
 #   (A) Foundation training  — full fine-tuning, 8× A100 80GB, DeepSpeed ZeRO-3
-#   (B) Adapter training     — QLoRA, single A100 80GB
+#   (B) Adapter training     — QLoRA, single A100 40GB+
 #
 # Installing packages in the wrong order (or all at once) will break CUDA,
 # corrupt your torch install, or produce silent compute failures.
@@ -44,12 +44,12 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "============================================================"
-echo "  IMI Mixtral 8x7B — Training Environment Setup"
+echo "  IMI Mistral 7B — Training Environment Setup"
 if [[ "$INSTALL_DEEPSPEED" == true ]]; then
     echo "  Mode: Foundation Training (includes DeepSpeed ZeRO-3)"
 else
     echo "  Mode: Adapter Training / QLoRA (no DeepSpeed)"
-    echo "  For foundation training on 8xA100, add --foundation flag"
+    echo "  For foundation training on 8× A100, re-run with --foundation"
 fi
 echo "============================================================"
 
@@ -174,6 +174,13 @@ pip install --upgrade \
     "pyyaml>=6.0.1" \
     "pymupdf>=1.24.0"
 
+# Replace deprecated pynvml with the official nvidia-ml-py package.
+# torch imports pynvml for GPU monitoring; pynvml is a stale fork that
+# emits FutureWarning on every import.  nvidia-ml-py is the canonical package.
+echo "  Replacing pynvml with nvidia-ml-py (silences FutureWarning)..."
+pip uninstall pynvml -y 2>/dev/null || true
+pip install --upgrade "nvidia-ml-py>=12.535.0"
+
 # ── Step 5: Flash Attention 2 (optional but recommended) ─────────────────────
 echo ""
 if [[ "$SKIP_FLASH_ATTN" == true ]]; then
@@ -184,9 +191,12 @@ else
     echo "  This speeds up training by ~30-50% on A100/H100."
     echo "  If this fails, re-run with --skip-flash and training will still work."
 
-    pip install "flash-attn==2.5.9" --no-build-isolation || {
+    # flash-attn 2.5.9 has no pre-built wheel for torch 2.4 + CUDA 12.4.
+    # Use >=2.6.0 which ships pre-built wheels for this combination.
+    pip install "flash-attn>=2.6.0" --no-build-isolation || {
         echo "  WARNING: flash-attn install failed. Training will continue without it."
-        echo "  The training script will automatically disable it."
+        echo "  The training script will automatically fall back to eager attention."
+        echo "  You can retry manually: pip install flash-attn --no-build-isolation"
     }
 fi
 
@@ -199,8 +209,10 @@ if [[ "$INSTALL_DEEPSPEED" == true ]]; then
 
     pip install "ninja>=1.11.1" "packaging>=23.0"
 
-    # DeepSpeed install — build CPU Adam op at minimum
-    DS_BUILD_CPU_ADAM=1 pip install "deepspeed==0.14.0" || {
+    # DeepSpeed install — build CPU Adam op at minimum.
+    # 0.14.x uses the deprecated torch.cuda.amp.custom_fwd API and emits
+    # FutureWarning on torch 2.4+.  0.16.x fixes this.
+    DS_BUILD_CPU_ADAM=1 pip install "deepspeed>=0.16.0" || {
         echo "  WARNING: deepspeed install failed."
         echo "  Try: apt-get install -y ninja-build build-essential"
         echo "  Then re-run with --foundation"
@@ -269,13 +281,24 @@ try:
     import flash_attn
     print(f'flash-attn:     {flash_attn.__version__}')
 except:
-    print('flash-attn:     not installed (optional)')
+    print('flash-attn:     not installed (optional — ~30% speedup on A100)')
 
 try:
     import deepspeed
     print(f'deepspeed:      {deepspeed.__version__}')
 except:
-    print('deepspeed:      not installed (needed only for foundation training)')
+    gpu_count = torch.cuda.device_count()
+    if gpu_count > 1:
+        print(f'deepspeed:      NOT INSTALLED  *** REQUIRED for {gpu_count}x GPU foundation training ***')
+        print(f'                Re-run: bash scripts/install_training.sh --foundation')
+    else:
+        print('deepspeed:      not installed (only needed for foundation training)')
+
+try:
+    import pynvml
+    print('pynvml:         still installed — run: pip uninstall pynvml -y && pip install nvidia-ml-py')
+except ImportError:
+    pass  # good — pynvml should not be present
 "
 
 echo ""
