@@ -11,7 +11,7 @@ import time
 from src.core.config import settings
 from src.core.security.audit import AuditLogger, get_audit_logger, AuditAction
 
-from .meditron import MixtralMedicalModel
+from .meditron import MistralMedicalModel
 from .prompts import PromptTemplates, RolePrompts, RoleType, ConversationFormatter
 from .adapters import DomainAdapter, AdapterType
 
@@ -69,10 +69,10 @@ class LLMService:
     
     def __init__(
         self,
-        model: Optional[MixtralMedicalModel] = None,
+        model: Optional[MistralMedicalModel] = None,
         audit_logger: Optional[AuditLogger] = None,
     ):
-        self.model = model or MixtralMedicalModel()
+        self.model = model or MistralMedicalModel()
         self.adapter_manager = DomainAdapter()
         self.audit = audit_logger or get_audit_logger()
         self._initialized = False
@@ -218,7 +218,7 @@ class LLMService:
             user_role=role.value,
             query=query,
             response=content,
-            model_name="mixtral-8x7b",
+            model_name="mistral-7b",
             verification_passed=False,
             latency_ms=latency_ms,
         )

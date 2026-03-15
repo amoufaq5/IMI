@@ -1,8 +1,8 @@
 """
-Mixtral 8x7B Model Integration
+Mistral 7B Model Integration
 
-Mixtral 8x7B is a Mixture-of-Experts LLM (Apache 2.0) used as IMI's base model.
-After medical foundation fine-tuning + DPO safety alignment, it serves as the
+Mistral-7B-Instruct-v0.3 (Apache 2.0) is used as IMI's base model for MVP/POC.
+After medical foundation fine-tuning + ORPO safety alignment, it serves as the
 core generation engine with 6 LoRA adapters hot-swapped per user type.
 
 This module handles model loading, inference, and medical-specific optimizations.
@@ -26,18 +26,18 @@ from src.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class MixtralMedicalModel:
+class MistralMedicalModel:
     """
-    Mixtral 8x7B Medical Language Model
-    
-    Base: mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache 2.0)
-    Architecture: Mixture of Experts (8 experts, 2 active per token)
+    Mistral 7B Medical Language Model
+
+    Base: mistralai/Mistral-7B-Instruct-v0.3 (Apache 2.0)
+    Architecture: Dense transformer (7B parameters, all active)
     Context: 32K tokens
-    
+
     Handles:
     - Model loading with QLoRA quantization (4-bit NF4)
     - LoRA adapter loading/hot-swapping for 6 user types
-    - Text generation with Mixtral chat template
+    - Text generation with Mistral [INST] chat template
     - Streaming generation support
     - Optional vLLM backend for production inference
     """
@@ -53,7 +53,7 @@ class MixtralMedicalModel:
         "eos_token_id": None,
     }
     
-    # Mixtral chat template
+    # Mistral chat template (same [INST] format as Mixtral)
     CHAT_TEMPLATE = "<s>[INST] {system}\n\n{user} [/INST]"
     
     def __init__(
@@ -96,7 +96,7 @@ class MixtralMedicalModel:
             logger.info("vLLM backend ready (tokenizer loaded locally)")
             return
         
-        logger.info(f"Loading Mixtral 8x7B model from {self.model_path}")
+        logger.info(f"Loading Mistral 7B model from {self.model_path}")
         
         quantization_config = None
         if self.load_in_4bit:
@@ -140,7 +140,7 @@ class MixtralMedicalModel:
             eos_token_id=self.tokenizer.eos_token_id,
         )
         
-        logger.info("Mixtral 8x7B model loaded successfully")
+        logger.info("Mistral 7B model loaded successfully")
     
     def load_adapter(self, adapter_path: str, adapter_name: str = "default") -> None:
         """Load a LoRA adapter for domain-specific fine-tuning"""

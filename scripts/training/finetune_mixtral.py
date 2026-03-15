@@ -1,40 +1,41 @@
 """
-Mixtral 8x7B QLoRA Fine-tuning on Medical Corpus
-=================================================
+Mistral 7B QLoRA Fine-tuning on Medical Corpus
+===============================================
 
-Fine-tunes mistralai/Mixtral-8x7B-Instruct-v0.1 using QLoRA (4-bit NF4
+Fine-tunes mistralai/Mistral-7B-Instruct-v0.3 using QLoRA (4-bit NF4
 quantization + LoRA adapters) on two data formats:
 
   general_knowledge — Raw medical text passages (causal LM style)
   instruction       — Medical Q&A / instruction-following pairs
 
 QLoRA keeps the base model in 4-bit while training only the LoRA adapter
-weights in BF16. This reduces GPU memory from ~93 GB (BF16 full) to ~35-50 GB
-depending on batch size and sequence length.
+weights in BF16. Mistral 7B in 4-bit fits in ~6 GB VRAM; full QLoRA run
+with batch=4, seq=2048 fits comfortably in a single A100 40GB.
 
 GPU tier presets:
-  --gpu-tier A100_40GB   batch=1, seq=1024, grad_accum=16  (40 GB VRAM)
-  --gpu-tier A100_80GB   batch=4, seq=2048, grad_accum=4   (80 GB VRAM) ← recommended
-  --gpu-tier H100_80GB   batch=8, seq=2048, grad_accum=2   (80 GB VRAM, fast)
+  --gpu-tier RTX3090     batch=2, seq=1024, grad_accum=8   (24 GB VRAM)
+  --gpu-tier A100_40GB   batch=4, seq=2048, grad_accum=4   (40 GB VRAM) ← recommended
+  --gpu-tier A100_80GB   batch=8, seq=4096, grad_accum=2   (80 GB VRAM)
+  --gpu-tier H100_80GB   batch=16, seq=4096, grad_accum=1  (80 GB VRAM, fast)
 
 Usage:
     # Demo: 100 examples, 10 steps — verify setup works before full training
     python scripts/training/finetune_mixtral.py --demo
 
     # Full training with recommended GPU
-    python scripts/training/finetune_mixtral.py --gpu-tier A100_80GB
+    python scripts/training/finetune_mixtral.py --gpu-tier A100_40GB
 
     # Custom settings
     python scripts/training/finetune_mixtral.py \\
         --gpu-tier A100_80GB \\
-        --epochs 2 \\
-        --output-dir models/mixtral-medical-v1 \\
+        --epochs 3 \\
+        --output-dir models/mistral-medical-v1 \\
         --data-format both        # "general_knowledge", "instruction", or "both"
 
     # Resume from checkpoint
     python scripts/training/finetune_mixtral.py \\
         --gpu-tier A100_80GB \\
-        --resume-from models/mixtral-medical-v1/checkpoint-500
+        --resume-from models/mistral-medical-v1/checkpoint-500
 
 Prerequisites (install with scripts/install_training.sh):
     torch==2.2.0  transformers==4.42.0  peft==0.11.1  trl==0.9.6
@@ -62,28 +63,28 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 MODELS_DIR = PROJECT_ROOT / "models"
 
-BASE_MODEL = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # =============================================================================
 # GPU TIER CONFIGS
-# Tuned to stay within VRAM budget while maximising throughput.
+# Mistral 7B is much smaller than Mixtral 8x7B — fits in a single GPU.
 # effective_batch = per_device_batch × grad_accum_steps  (× num_gpus if multi-GPU)
 # =============================================================================
 
 GPU_TIERS: Dict[str, Dict[str, Any]] = {
-    "A100_40GB": {
-        # 40 GB VRAM — tight fit; gradient checkpointing required
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 16,    # effective batch = 16
+    "RTX3090": {
+        # 24 GB VRAM — Mistral 7B 4-bit (~6 GB) + activations fits comfortably
+        "per_device_train_batch_size": 2,
+        "gradient_accumulation_steps": 8,     # effective batch = 16
         "max_seq_length": 1024,
         "gradient_checkpointing": True,
         "lora_r": 16,
         "lora_alpha": 32,
         "lora_dropout": 0.05,
-        "note": "A100 40 GB — tight; checkpoint every 200 steps.",
+        "note": "RTX 3090 24 GB — budget option, works for Mistral 7B.",
     },
-    "A100_80GB": {
-        # 80 GB VRAM — comfortable, recommended default
+    "A100_40GB": {
+        # 40 GB VRAM — recommended for Mistral 7B QLoRA
         "per_device_train_batch_size": 4,
         "gradient_accumulation_steps": 4,     # effective batch = 16
         "max_seq_length": 2048,
@@ -91,18 +92,29 @@ GPU_TIERS: Dict[str, Dict[str, Any]] = {
         "lora_r": 32,
         "lora_alpha": 64,
         "lora_dropout": 0.05,
-        "note": "A100 80 GB — recommended. Best price/performance.",
+        "note": "A100 40 GB — recommended. Best price/performance for Mistral 7B.",
     },
-    "H100_80GB": {
-        # 80 GB VRAM + faster BF16 tensor cores
+    "A100_80GB": {
+        # 80 GB VRAM — comfortable; use larger seq/batch for throughput
         "per_device_train_batch_size": 8,
         "gradient_accumulation_steps": 2,     # effective batch = 16
-        "max_seq_length": 2048,
+        "max_seq_length": 4096,
         "gradient_checkpointing": True,
         "lora_r": 64,
         "lora_alpha": 128,
         "lora_dropout": 0.05,
-        "note": "H100 80 GB — fastest option, higher cost.",
+        "note": "A100 80 GB — plenty of headroom for Mistral 7B.",
+    },
+    "H100_80GB": {
+        # 80 GB VRAM + faster BF16 tensor cores
+        "per_device_train_batch_size": 16,
+        "gradient_accumulation_steps": 1,     # effective batch = 16
+        "max_seq_length": 4096,
+        "gradient_checkpointing": False,       # enough VRAM to skip checkpointing
+        "lora_r": 64,
+        "lora_alpha": 128,
+        "lora_dropout": 0.05,
+        "note": "H100 80 GB — fastest option for Mistral 7B.",
     },
     "DEMO": {
         # Minimal config: verify pipeline works in <5 minutes
@@ -117,10 +129,11 @@ GPU_TIERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# LoRA target modules for Mixtral (attention + MLP projections)
+# LoRA target modules for Mistral 7B (dense transformer — no MoE)
+# Attention projections + SwiGLU FFN projections
 LORA_TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "w1", "w2", "w3",                        # Mixtral MoE gate + FFN projections
+    "q_proj", "k_proj", "v_proj", "o_proj",   # attention
+    "gate_proj", "up_proj", "down_proj",        # SwiGLU FFN (replaces Mixtral w1/w2/w3)
 ]
 
 
@@ -243,7 +256,7 @@ def load_training_dataset(
 
 def load_model_and_tokenizer(base_model: str, tier_cfg: Dict[str, Any]):
     """
-    Load Mixtral in 4-bit NF4 QLoRA mode.
+    Load Mistral 7B in 4-bit NF4 QLoRA mode.
     The base weights stay frozen in 4-bit; only LoRA adapters are trained in BF16.
     """
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -345,7 +358,7 @@ def build_training_args(
         save_steps=save_steps,
         save_total_limit=2,
         report_to=report_to,
-        run_name="imi-mixtral-medical-qlora",
+        run_name="imi-mistral7b-medical-qlora",
         gradient_checkpointing=tier_cfg["gradient_checkpointing"],
         dataloader_num_workers=2,              # Keep low to avoid CPU memory issues
         dataloader_pin_memory=True,
@@ -373,7 +386,7 @@ def run_training(
     tier_cfg = GPU_TIERS[tier]
 
     logger.info("=" * 60)
-    logger.info("  IMI Mixtral 8x7B — QLoRA Medical Fine-tuning")
+    logger.info("  IMI Mistral 7B — QLoRA Medical Fine-tuning")
     logger.info("=" * 60)
     logger.info(f"  Base model:      {base_model}")
     logger.info(f"  GPU tier:        {tier} — {tier_cfg['note']}")
@@ -398,10 +411,10 @@ def run_training(
         gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
         logger.info(f"  GPU: {gpu_count}× {gpu_name} ({gpu_mem:.0f} GB)")
 
-        if gpu_mem < 35:
+        if gpu_mem < 16:
             logger.warning(
-                f"  VRAM ({gpu_mem:.0f} GB) may be too low for Mixtral 8x7B QLoRA. "
-                "Minimum recommended: 40 GB. Expect OOM if seq_len > 512."
+                f"  VRAM ({gpu_mem:.0f} GB) may be too low for Mistral 7B QLoRA. "
+                "Minimum recommended: 16 GB. Expect OOM if seq_len > 512."
             )
     else:
         logger.error("  No CUDA GPU detected! QLoRA training requires GPU.")
@@ -487,7 +500,7 @@ def run_training(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Mixtral 8x7B QLoRA Medical Fine-tuning",
+        description="Mistral 7B QLoRA Medical Fine-tuning",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -497,9 +510,9 @@ def main():
         help="Demo mode: 100 examples, 10 steps. Verify setup before full training.",
     )
     parser.add_argument(
-        "--gpu-tier", default="A100_80GB",
+        "--gpu-tier", default="A100_40GB",
         choices=list(GPU_TIERS.keys()),
-        help="GPU preset (default: A100_80GB). Use A100_40GB for tighter VRAM.",
+        help="GPU preset (default: A100_40GB). Use RTX3090 for budget training.",
     )
     parser.add_argument(
         "--data-format", default="both",
@@ -521,7 +534,7 @@ def main():
     )
     parser.add_argument(
         "--output-dir", default=None,
-        help="Where to save the LoRA adapter (default: models/mixtral-medical-qlora)",
+        help="Where to save the LoRA adapter (default: models/mistral-medical-qlora)",
     )
     parser.add_argument(
         "--epochs", type=int, default=1,
@@ -557,7 +570,7 @@ def main():
     tier = "DEMO" if args.demo else args.gpu_tier
     data_dir = Path(args.data_dir) if args.data_dir else DATA_DIR
     output_dir = args.output_dir or str(
-        MODELS_DIR / ("mixtral-medical-demo" if args.demo else "mixtral-medical-qlora")
+        MODELS_DIR / ("mistral-medical-demo" if args.demo else "mistral-medical-qlora")
     )
 
     run_training(
