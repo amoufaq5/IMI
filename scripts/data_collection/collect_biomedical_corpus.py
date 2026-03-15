@@ -171,13 +171,38 @@ class NCBIClient:
         r.raise_for_status()
         return r.text
 
-    def search(self, db: str, query: str, retmax: int = 100) -> List[str]:
-        """Run ESearch and return list of IDs."""
+    def search(self, db: str, query: str, retmax: int = 10_000) -> List[str]:
+        """Run ESearch and return ALL matching IDs via paginated WebEnv history.
+
+        NCBI caps a single retmax at 10 000; this method pages through the
+        entire result set in 10 000-ID batches so there is no total limit.
+        """
+        # First call: get total count + history-server keys (return 0 IDs).
         result = self._get("esearch.fcgi", self._params(
-            db=db, term=query, retmax=retmax, usehistory="y",
+            db=db, term=query, retmax=0, usehistory="y",
         ))
-        ids = result.get("esearchresult", {}).get("idlist", [])
-        return ids
+        esearch = result.get("esearchresult", {})
+        total = int(esearch.get("count", 0))
+        web_env = esearch.get("webenv", "")
+        query_key = esearch.get("querykey", "")
+
+        if total == 0:
+            return []
+
+        # Paginate through every result using the history server.
+        page = 10_000  # NCBI hard cap per request
+        all_ids: List[str] = []
+        for retstart in range(0, total, page):
+            r = self._get("esearch.fcgi", self._params(
+                db=db, term=query, retmax=page, retstart=retstart,
+                usehistory="y", WebEnv=web_env, query_key=query_key,
+            ))
+            batch = r.get("esearchresult", {}).get("idlist", [])
+            all_ids.extend(batch)
+            if not batch:
+                break
+
+        return all_ids
 
     def fetch_pubmed_abstracts(self, pmids: List[str]) -> List[Dict[str, Any]]:
         """Fetch PubMed abstracts for a list of PMIDs."""
@@ -260,13 +285,15 @@ class NCBIClient:
 # =============================================================================
 
 def collect_pubmed(ncbi: NCBIClient, queries: List[Tuple[str, str, str]],
-                   max_per_query: int = 5000) -> List[Dict[str, Any]]:
+                   max_per_query: int = 10_000) -> List[Dict[str, Any]]:
     """
     Collect PubMed abstracts across clinical domains.
 
     Args:
         queries: List of (query_string, adapter_type, topic_label)
-        max_per_query: Max articles per query (API max = 10000, practical: 5000)
+        max_per_query: Per-page fetch size passed to search() (NCBI max = 10 000).
+                       search() now paginates automatically so all matching
+                       articles are retrieved with no total cap.
     """
     records = []
     batch_size = 200  # PMIDs per efetch call
@@ -329,7 +356,7 @@ PUBMED_QUERIES = [
 # 2. PUBMED CENTRAL — FULL TEXT
 # =============================================================================
 
-def collect_pmc(ncbi: NCBIClient, max_articles: int = 2000) -> List[Dict[str, Any]]:
+def collect_pmc(ncbi: NCBIClient, max_articles: int = 10_000) -> List[Dict[str, Any]]:
     """Collect PMC open-access full-text articles across medical disciplines."""
     records = []
     pmc_queries = [
@@ -403,13 +430,13 @@ def collect_preprints(max_per_server: int = 2000) -> List[Dict[str, Any]]:
 # 4. LITCOVID — COVID-19 LITERATURE
 # =============================================================================
 
-def collect_litcovid(ncbi: NCBIClient, max_articles: int = 3000) -> List[Dict[str, Any]]:
+def collect_litcovid(ncbi: NCBIClient, max_articles: int = 10_000) -> List[Dict[str, Any]]:
     """Collect LitCovid COVID-19 curated literature via PubMed."""
     logger.info("  Collecting LitCovid (COVID-19 curated literature)...")
     query = "COVID-19[mh] OR SARS-CoV-2[mh] AND 2020:2024[dp]"
     pmids = ncbi.search("pubmed", query, retmax=max_articles)
     records = []
-    for i in range(0, min(len(pmids), max_articles), 200):
+    for i in range(0, len(pmids), 200):
         batch = pmids[i:i + 200]
         abstracts = ncbi.fetch_pubmed_abstracts(batch)
         for a in abstracts:
@@ -1129,7 +1156,7 @@ CATEGORIES = {
 }
 
 
-def collect_all(category: str = "all", max_per_source: int = 5000) -> None:
+def collect_all(category: str = "all", max_per_source: int = 10_000) -> None:
     ncbi = NCBIClient(api_key=NCBI_API_KEY)
     if NCBI_API_KEY:
         logger.info(f"NCBI API key active — rate: 10 req/s")
@@ -1203,8 +1230,8 @@ def main():
     parser.add_argument(
         "--max-per-source",
         type=int,
-        default=5000,
-        help="Maximum records per source (default: 5000)",
+        default=10_000,
+        help="Per-page fetch size (NCBI max = 10 000); all pages are retrieved automatically (default: 10000)",
     )
     parser.add_argument(
         "--list",
