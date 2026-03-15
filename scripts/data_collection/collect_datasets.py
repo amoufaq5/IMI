@@ -156,6 +156,54 @@ DATASETS = [
                   description="Drug reviews with conditions and ratings (215K) ★★★★", adapter_type="clinical_pharmacist"),
     DatasetConfig(name="phi_drug", hf_id="Shishir1807/Phi_Drug",
                   description="Drug information instruction data (53K) ★★★", adapter_type="clinical_pharmacist"),
+    # ======================== ONCOLOGY ========================
+    DatasetConfig(name="cancer_genetics_qa", hf_id="sultanmalik/cancer_genetics_qa",
+                  description="Cancer genetics and oncology Q&A (5K) ★★★★", adapter_type="clinical_decision"),
+    DatasetConfig(name="oncology_qa", hf_id="ntunlp/OncQA",
+                  description="Oncology clinical Q&A from physicians (2.2K) ★★★★★", adapter_type="clinical_decision"),
+    DatasetConfig(name="clinical_notes_oncology", hf_id="BI55/MedText",
+                  description="Clinical notes covering ICU, ER, oncology (1.5K) ★★★★", adapter_type="clinical_decision"),
+
+    # ======================== PEDIATRICS ========================
+    DatasetConfig(name="pediatric_qa", hf_id="truehealth-ai/pediatric-medical-qa",
+                  description="Pediatric medicine Q&A (3K) ★★★★", adapter_type="patient_triage"),
+    DatasetConfig(name="child_development_qa", hf_id="Marqo/google-hospitals-and-health",
+                  description="Child health, development and growth (8K) ★★★", adapter_type="patient_triage"),
+
+    # ======================== MENTAL HEALTH (EXPANDED) ========================
+    DatasetConfig(name="psych8k", hf_id="EmergentMethods/Psych8k",
+                  description="Psychiatric consultation notes and responses (8K) ★★★★★", adapter_type="patient_triage"),
+    DatasetConfig(name="mental_health_reddit", hf_id="vibhorag101/llm-mental-health-counselor",
+                  description="Mental health counseling fine-tuning dataset (4.7K) ★★★★", adapter_type="patient_triage"),
+    DatasetConfig(name="depression_anxiety_qa", hf_id="Amod/mental_health_counseling_conversations",
+                  description="Depression and anxiety counseling conversations (3K) ★★★★",
+                  adapter_type="patient_triage"),
+
+    # ======================== CARDIOLOGY ========================
+    DatasetConfig(name="cardiology_mcq", hf_id="ngram/cardiology-mcq",
+                  description="Cardiology board-style MCQs (2K) ★★★★", adapter_type="education"),
+    DatasetConfig(name="heart_disease_qa", hf_id="Mohammed-Altaf/medical-instruction-100k",
+                  description="Cardiology and cardiac care instruction pairs (subset) ★★★",
+                  adapter_type="clinical_decision"),
+
+    # ======================== PHARMACOGENOMICS ========================
+    DatasetConfig(name="drug_gene_interaction", hf_id="pruas/BENCH-PharmaCoKG-DrugGene",
+                  description="Drug-gene interaction knowledge graph (9K) ★★★★★", adapter_type="clinical_pharmacist"),
+    DatasetConfig(name="drug_synergy", hf_id="tatonetti-lab/drug-synergy",
+                  description="Drug synergy and combination therapy data (11K) ★★★★", adapter_type="clinical_pharmacist"),
+
+    # ======================== CLINICAL NLP / NAMED ENTITIES ========================
+    DatasetConfig(name="ddi_corpus", hf_id="bigbio/ddi_corpus", hf_subset="ddi_corpus_bigbio_kb",
+                  description="Drug-drug interaction text corpus NLP (1K) ★★★★", adapter_type="clinical_pharmacist"),
+    DatasetConfig(name="ncbi_disease", hf_id="bigbio/ncbi_disease", hf_subset="ncbi_disease_bigbio_ner",
+                  description="Disease named entity recognition (793) ★★★★", adapter_type="clinical_decision"),
+
+    # ======================== USMLE STEP 2 / HARDER ========================
+    DatasetConfig(name="medqa_usmle4", hf_id="GBaker/MedQA-USMLE-4-options",
+                  description="USMLE 4-option harder format (12K) ★★★★★", adapter_type="education"),
+    DatasetConfig(name="medical_meadow_usmle_step2", hf_id="medalpaca/medical_meadow_usmle",
+                  description="USMLE Step 2 clinical knowledge (10K) ★★★★", adapter_type="education"),
+
     DatasetConfig(name="medicine_review", hf_id="Shivani-3112/medicine-review",
                   description="Medicine reviews with side effects (161K) ★★★", adapter_type="clinical_pharmacist"),
 ]

@@ -1,8 +1,8 @@
 """
-Mixtral 8x7B Model Integration
+Mistral 7B Model Integration
 
-Mixtral 8x7B is a Mixture-of-Experts LLM (Apache 2.0) used as IMI's base model.
-After medical foundation fine-tuning + DPO safety alignment, it serves as the
+Mistral-7B-Instruct-v0.3 (Apache 2.0) is used as IMI's base model for MVP/POC.
+After medical foundation fine-tuning + ORPO safety alignment, it serves as the
 core generation engine with 6 LoRA adapters hot-swapped per user type.
 
 This module handles model loading, inference, and medical-specific optimizations.
@@ -26,18 +26,18 @@ from src.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class MixtralMedicalModel:
+class MistralMedicalModel:
     """
-    Mixtral 8x7B Medical Language Model
-    
-    Base: mistralai/Mixtral-8x7B-Instruct-v0.1 (Apache 2.0)
-    Architecture: Mixture of Experts (8 experts, 2 active per token)
+    Mistral 7B Medical Language Model
+
+    Base: mistralai/Mistral-7B-Instruct-v0.3 (Apache 2.0)
+    Architecture: Dense transformer (7B parameters, all active)
     Context: 32K tokens
-    
+
     Handles:
     - Model loading with QLoRA quantization (4-bit NF4)
     - LoRA adapter loading/hot-swapping for 6 user types
-    - Text generation with Mixtral chat template
+    - Text generation with Mistral [INST] chat template
     - Streaming generation support
     - Optional vLLM backend for production inference
     """
@@ -53,7 +53,7 @@ class MixtralMedicalModel:
         "eos_token_id": None,
     }
     
-    # Mixtral chat template
+    # Mistral chat template (same [INST] format as Mixtral)
     CHAT_TEMPLATE = "<s>[INST] {system}\n\n{user} [/INST]"
     
     def __init__(
@@ -96,7 +96,7 @@ class MixtralMedicalModel:
             logger.info("vLLM backend ready (tokenizer loaded locally)")
             return
         
-        logger.info(f"Loading Mixtral 8x7B model from {self.model_path}")
+        logger.info(f"Loading Mistral 7B model from {self.model_path}")
         
         quantization_config = None
         if self.load_in_4bit:
@@ -140,7 +140,7 @@ class MixtralMedicalModel:
             eos_token_id=self.tokenizer.eos_token_id,
         )
         
-        logger.info("Mixtral 8x7B model loaded successfully")
+        logger.info("Mistral 7B model loaded successfully")
     
     def load_adapter(self, adapter_path: str, adapter_name: str = "default") -> None:
         """Load a LoRA adapter for domain-specific fine-tuning"""
@@ -304,6 +304,77 @@ class MixtralMedicalModel:
         
         return embeddings
     
+    def generate_with_consistency(
+        self,
+        prompt: str,
+        n: int = 5,
+        temperature: float = 0.4,
+        max_new_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Self-consistency decoding for high-stakes medical queries.
+
+        Generates n independent responses at temperature > 0 and returns the
+        most representative one via majority-vote on urgency/recommendation label.
+
+        Intended for EMERGENCY and URGENT triage queries only, where a single
+        stochastic decode could miss a critical flag. By generating multiple
+        independent samples and voting, we reduce the chance of a false-negative
+        on life-threatening conditions.
+
+        Vote strategy:
+          - Extract the first capital-letter urgency label from each response
+            (EMERGENCY, URGENT, SEMI_URGENT, ROUTINE, SELF_CARE).
+          - If any vote is EMERGENCY, return the response that voted EMERGENCY
+            (conservative: always surface the most critical finding).
+          - Otherwise return the response with the most common label.
+          - Tie-break: return the first response.
+
+        Args:
+            prompt: The fully-formatted prompt string.
+            n: Number of independent samples (default 5).
+            temperature: Sampling temperature (default 0.4 — diverse but coherent).
+            max_new_tokens: Max tokens per sample (default: model default).
+
+        Returns:
+            Single best response string.
+        """
+        import re
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        _URGENCY_LABELS = ["EMERGENCY", "URGENT", "SEMI_URGENT", "ROUTINE", "SELF_CARE"]
+        _URGENCY_PATTERN = re.compile(r"\b(EMERGENCY|URGENT|SEMI_URGENT|ROUTINE|SELF_CARE)\b")
+
+        responses: List[str] = []
+        labels: List[str] = []
+
+        for _ in range(n):
+            response = self.generate(
+                prompt=prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            responses.append(response)
+            match = _URGENCY_PATTERN.search(response.upper())
+            labels.append(match.group(1) if match else "UNKNOWN")
+
+        # Conservative vote: if any sample says EMERGENCY, surface it
+        if "EMERGENCY" in labels:
+            idx = labels.index("EMERGENCY")
+            logger.info(f"Self-consistency: EMERGENCY detected in {labels.count('EMERGENCY')}/{n} samples")
+            return responses[idx]
+
+        # Otherwise majority vote
+        from collections import Counter
+        most_common_label, _ = Counter(labels).most_common(1)[0]
+        for response, label in zip(responses, labels):
+            if label == most_common_label:
+                logger.info(f"Self-consistency: majority label={most_common_label} ({labels.count(most_common_label)}/{n})")
+                return response
+
+        return responses[0]
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text"""
         return len(self.tokenizer.encode(text))

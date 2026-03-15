@@ -1,8 +1,8 @@
 # =============================================================================
-# requirements-training.txt — Mixtral 8x7B Medical Training
+# requirements-training.txt — Mistral 7B Medical Training (MVP/POC)
 # Covers both:
-#   (A) Foundation Training  — full fine-tuning, 8× A100 80GB, DeepSpeed ZeRO-3
-#   (B) Adapter Training     — QLoRA, single A100 80GB, no DeepSpeed
+#   (A) Foundation Training  — full fine-tuning, 1× A100 80GB + DeepSpeed CPU offload
+#   (B) Adapter Training     — QLoRA, single A100 40GB, no DeepSpeed needed
 # =============================================================================
 #
 # WARNING: DO NOT run `pip install -r requirements-training.txt` directly.
@@ -26,7 +26,7 @@
 # ── STAGE 2: Core Training Stack ──────────────────────────────────────────────
 # Install AFTER torch: `python -c "import torch; print(torch.cuda.is_available())"`
 
-transformers==4.44.2          # Mixtral model support, SFTTrainer compat (torch 2.4.x compat)
+transformers==4.44.2          # Mistral 7B model support, SFTTrainer compat (torch 2.4.x compat)
 accelerate==0.34.2            # Multi-GPU / mixed precision wrapper (torch 2.4.x compat)
 peft==0.12.0                  # LoRA adapters — ADAPTER TRAINING only, not foundation
 trl==0.9.6                    # SFTTrainer — DO NOT upgrade past 0.9.x without testing
@@ -35,9 +35,9 @@ datasets==2.21.0              # HuggingFace datasets loader
 safetensors==0.4.5            # Fast model checkpoint format
 
 # ── STAGE 3: Tokenization & Utilities ─────────────────────────────────────────
-sentencepiece==0.1.99         # Mixtral tokenizer (required)
+sentencepiece==0.1.99         # Mistral tokenizer (required)
 tokenizers==0.19.1            # Fast tokenizers
-einops==0.8.0                 # Tensor rearrangement ops used by Mixtral attention
+einops==0.8.0                 # Tensor rearrangement ops
 numpy==1.26.4                 # Must stay <2.0 for PyTorch 2.2 compatibility
 pandas==2.2.1                 # Data manipulation
 tqdm>=4.65.0                  # Progress bars

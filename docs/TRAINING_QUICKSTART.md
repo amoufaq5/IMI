@@ -9,24 +9,24 @@
 
 ### What Is Foundation Training?
 
-Foundation training **adapts the entire Mixtral 8x7B base model** to the medical domain.
+Foundation training **adapts the entire Mistral 7B base model** to the medical domain.
 It teaches the model general medical knowledge, terminology, and reasoning patterns
-using a large combined corpus (3M+ examples across all adapters).
+using a large combined corpus (~4–5M clean examples across all adapters).
 
 ```
-Mixtral 8x7B (general purpose) ──[Foundation Training]──> Medical-Mixtral (medical domain)
+Mistral 7B (general purpose) ──[Foundation Training]──> Medical-Mistral (medical domain)
 ```
 
 | Aspect | Foundation Training | Adapter Training |
 |--------|-------------------|------------------|
 | **Purpose** | Teach general medical knowledge | Specialize for a user type |
-| **Input data** | All datasets combined (3M+ examples) | Per-adapter datasets (50K-500K each) |
+| **Input data** | All datasets combined (~4–5M examples) | Per-adapter datasets (50K–500K each) |
 | **LoRA rank** | r=64, α=128 (larger = learns more) | r=32, α=64 (smaller = focused) |
-| **Target layers** | q,k,v,o_proj **+ MoE experts (w1,w2,w3)** | q,k,v,o_proj only |
-| **Training time** | ~12 hours on 1×A100-80GB | ~4-8 hours per adapter |
+| **Target layers** | q,k,v,o_proj **+ gate/up/down_proj** | q,k,v,o_proj + gate/up/down_proj |
+| **Training time** | ~2 hrs (500K) / ~8 hrs (4M) on 1× A100 80GB | ~1–3 hrs per adapter |
 | **Output** | `models/foundation/` | `adapters/{name}/` |
 | **Runs once?** | Yes, once (reuse for all adapters) | Once per adapter (6 total) |
-| **Cost** | ~$1,500 | ~$300-400 per adapter |
+| **Cost** | ~$4–24 | ~$1–3 per adapter |
 
 ### What Is Adapter Training?
 
@@ -34,31 +34,31 @@ Adapter training creates a **small, specialized LoRA module** (~50-100MB) that s
 of the foundation model. Each adapter tailors the model for a specific user type:
 
 ```
-Medical-Mixtral ──[DPO Alignment]──> Safe-Medical-Mixtral
-                                            │
-                    ┌───────────────────────┼───────────────────────┐
-                    ▼                       ▼                       ▼
-            patient_triage          clinical_decision          education
-              adapter                   adapter                 adapter
-             (~80MB)                   (~80MB)                 (~80MB)
+Medical-Mistral ──[ORPO Alignment]──> Safe-Medical-Mistral
+                                             │
+                    ┌────────────────────────┼────────────────────────┐
+                    ▼                        ▼                        ▼
+            patient_triage           clinical_decision           education
+              adapter                    adapter                  adapter
+             (~40MB)                    (~40MB)                  (~40MB)
 ```
 
-### What Is DPO Safety Alignment?
+### What Is ORPO Safety Alignment?
 
-DPO (Direct Preference Optimization) is a **middle step** between foundation and adapter
-training. It teaches the model to **prefer safe responses** over unsafe ones using
-paired examples (chosen vs rejected).
+ORPO (Odds Ratio Preference Optimization) is a **middle step** between foundation and adapter
+training. It teaches the model to **prefer safe responses** over unsafe ones in a
+**single training pass** — no separate reference model needed (saves ~14 GB GPU vs DPO).
 
 ```
-Foundation Model ──[DPO with safety pairs]──> Safety-Aligned Model ──[LoRA]──> Adapters
+Foundation Model ──[ORPO with safety pairs]──> Safety-Aligned Model ──[LoRA]──> Adapters
 ```
 
 ### The Full Pipeline
 
 ```
-Stage 1: Foundation     ─── "Learn medicine"        (~12 hrs, ~$1,500)
-Stage 2: DPO Alignment  ─── "Learn to be safe"      (~2 hrs,  ~$200)
-Stage 3: LoRA Adapters  ─── "Learn your user type"  (~4-8 hrs per adapter, ~$300 each)
+Stage 1: Foundation     ─── "Learn medicine"        (~2–8 hrs, ~$4–24)
+Stage 2: ORPO Alignment ─── "Learn to be safe"      (~30 min,  ~$1)
+Stage 3: LoRA Adapters  ─── "Learn your user type"  (~1–3 hrs per adapter, ~$1–3 each)
 ```
 
 ---
@@ -69,7 +69,7 @@ Stage 3: LoRA Adapters  ─── "Learn your user type"  (~4-8 hrs per adapter,
 
 | Component | License | Your IP? |
 |-----------|---------|----------|
-| **Mixtral 8x7B base model** | Apache 2.0 | ❌ No — but you can use it commercially, modify it, and distribute it freely |
+| **Mistral 7B base model** | Apache 2.0 | ❌ No — but you can use it commercially, modify it, and distribute it freely |
 | **Foundation LoRA weights** | Yours | ✅ Yes — trained on your data, your compute, your IP |
 | **DPO alignment weights** | Yours | ✅ Yes — your safety pairs, your training |
 | **All 6 adapter weights** | Yours | ✅ Yes — your domain-specific training data |
@@ -94,7 +94,7 @@ Stage 3: LoRA Adapters  ─── "Learn your user type"  (~4-8 hrs per adapter,
 
 ### Key Legal Points
 
-1. **Apache 2.0** (Mixtral's license) allows full commercial use, modification, and distribution
+1. **Apache 2.0** (Mistral's license) allows full commercial use, modification, and distribution
 2. **Your trained weights are your IP** — the LoRA adapters, foundation weights, and DPO weights belong to you
 3. **You do NOT need to open-source** your trained weights or code
 4. **Attribution**: You should credit Mistral AI for the base model in your documentation
@@ -273,7 +273,7 @@ python -c "
 from scripts.training.evaluate_adapter import AdapterEvaluator
 
 evaluator = AdapterEvaluator(
-    base_model_name='models/dpo_aligned',  # or 'mistralai/Mixtral-8x7B-Instruct-v0.1'
+    base_model_name='models/dpo_aligned',  # or 'mistralai/Mistral-7B-Instruct-v0.3'
     adapter_path='adapters/patient_triage'
 )
 
@@ -353,7 +353,7 @@ bash scripts/start_vllm.sh --port 8000
 curl -X POST http://localhost:8080/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        "model": "mistralai/Mistral-7B-Instruct-v0.3",
         "prompt": "[INST] You are a medical triage assistant.\n\nI have a headache and mild fever for 2 days. [/INST]",
         "max_tokens": 512,
         "temperature": 0.3

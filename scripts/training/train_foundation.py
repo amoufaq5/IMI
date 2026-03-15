@@ -1,29 +1,30 @@
 """
-Foundation Training for IMI Medical LLM — Full Fine-Tuning on 8× A100 80GB
+Foundation Training for IMI Medical LLM — Full Fine-Tuning on Mistral 7B
 
-Full-parameter fine-tuning of Mixtral 8x7B on the combined medical corpus.
-Designed for 8× A100 80GB with DeepSpeed ZeRO Stage 3.
+Full-parameter fine-tuning of Mistral-7B-Instruct-v0.3 on the combined medical corpus.
 
 Training pipeline:
   Foundation Training (this script) ← you are here
   → Adapter Training (finetune_mixtral.py)
 
 Key design decisions:
-- FULL fine-tuning (no LoRA/QLoRA) — all 46.7B parameters updated
+- FULL fine-tuning (no LoRA/QLoRA) — all 7B parameters updated
 - BFloat16 precision — A100/H100 native
-- DeepSpeed ZeRO Stage 3 — shards params + gradients + optimizer across 8 GPUs
+- DeepSpeed ZeRO Stage 2/3 optional — single A100 80GB can run without ZeRO
 - Flash Attention 2 — with eager fallback if not installed
-- Gradient checkpointing enabled — mandatory for A100 full FT
+- Gradient checkpointing enabled — recommended for max batch size
 - Sequence packing — maximises throughput
-- paged_adamw_32bit — memory-efficient optimizer compatible with ZeRO
 
-Run command (8× A100 80GB):
-    torchrun --nproc_per_node=8 scripts/training/train_foundation.py \\
+Hardware options:
+  Single A100 80GB (no ZeRO needed):
+    python scripts/training/train_foundation.py
+
+  Multi-GPU with ZeRO Stage 3:
+    torchrun --nproc_per_node=4 scripts/training/train_foundation.py \\
         --deepspeed configs/deepspeed_zero3.json
 
 Resume from checkpoint:
-    torchrun --nproc_per_node=8 scripts/training/train_foundation.py \\
-        --deepspeed configs/deepspeed_zero3.json \\
+    python scripts/training/train_foundation.py \\
         --resume-from models/foundation/checkpoint-1000
 """
 import hashlib
@@ -70,25 +71,28 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 
 # =============================================================================
-# A100 80GB CONFIG — 8-GPU DeepSpeed ZeRO Stage 3
+# MISTRAL 7B — A100 80GB CONFIG (single GPU, no ZeRO required)
 #
 # Memory budget per GPU (80 GB):
-#   Model shard (ZeRO-3):   46.7B × 2B / 8 GPUs  ≈ 11.7 GB
-#   Gradient shard:                                ≈ 11.7 GB
-#   Optimizer shard (32-bit AdamW):                ≈ 23.4 GB
-#   Activations (batch=4, seq=2048, grad_ckpt):   ≈ 15–20 GB
-#   Buffers / NCCL overhead:                       ≈  5 GB
-#   TOTAL:                                         ≈ 68–72 GB  ✓ safe margin
+#   Model weights (BF16):   7B × 2 bytes          ≈ 14 GB
+#   Gradients (BF16):                              ≈ 14 GB
+#   Optimizer (AdamW 32-bit, 2 states):            ≈ 56 GB
+#   Activations (batch=4, seq=2048, grad_ckpt):   ≈  6–10 GB
+#   TOTAL with grad checkpointing:                 ≈ 90–94 GB  → use CPU offload
+#   OR: With ZeRO-2 CPU optimizer offload:         ≈ 28 GB GPU ✓ comfortable
+#
+# Recommended: run with --deepspeed configs/deepspeed_zero3.json
+# to offload optimizer states to CPU (frees ~56 GB GPU → easy fit on 1× A100)
 # =============================================================================
 
 A100_8GPU_CONFIG = {
-    "base_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "base_model": "mistralai/Mistral-7B-Instruct-v0.3",
 
     # Training
-    "num_epochs": 1,
-    "batch_size": 4,                    # per-device; effective = 4 × 4 accum × 8 GPUs = 128
+    "num_epochs": 3,                   # Mistral 7B benefits from more epochs than Mixtral
+    "batch_size": 4,                   # per-device; effective = 4 × 4 accum = 16 (single GPU)
     "gradient_accumulation_steps": 4,
-    "learning_rate": 2e-5,             # lower than QLoRA — full FT is more sensitive
+    "learning_rate": 2e-5,             # standard full FT LR for 7B models
     "lr_scheduler_type": "cosine",
     "warmup_ratio": 0.03,
     "max_grad_norm": 1.0,
@@ -100,25 +104,24 @@ A100_8GPU_CONFIG = {
     "fp16": False,
     "tf32": True,                      # A100 and H100 Tensor Cores
 
-    # Optimizer — must be compatible with DeepSpeed ZeRO
-    # adamw_torch_fused conflicts with ZeRO; use adamw_torch instead
+    # Optimizer — use adamw_torch for single GPU; ZeRO handles multi-GPU
     "optim": "adamw_torch",
 
-    # Memory — gradient checkpointing is mandatory for A100 full FT
+    # Memory — gradient checkpointing recommended when optimizer is on GPU
     "gradient_checkpointing": True,
-    "dataloader_num_workers": 4,       # keep moderate to avoid CPU memory pressure
+    "dataloader_num_workers": 4,
     "dataloader_pin_memory": True,
     "dataloader_prefetch_factor": 2,
     "torch_compile": False,            # unstable with multi-GPU DDP/FSDP in torch 2.2
 
     # Saving
-    "save_steps": 500,
+    "save_steps": 200,
     "save_total_limit": 3,
     "logging_steps": 10,
 
     # Monitoring
     "report_to": "none",
-    "run_name": "imi-foundation-8xa100-full-ft",
+    "run_name": "imi-mistral7b-foundation-full-ft",
 }
 
 
@@ -131,10 +134,10 @@ A100_8GPU_CONFIG = {
 
 def _format_example(ex: Dict) -> Optional[str]:
     """
-    Convert a single example to Mixtral chat-formatted text.
+    Convert a single example to Mistral chat-formatted text.
 
     general_knowledge: raw text wrapped in <s>...</s>
-    instruction:       Mixtral [INST] / [/INST] template
+    instruction:       Mistral [INST] / [/INST] template
     """
     # general_knowledge format — has only 'text'
     if "text" in ex and "instruction" not in ex:
@@ -339,7 +342,7 @@ def train_foundation(
     output_path = output_dir or str(MODELS_DIR / "foundation")
 
     logger.info("=" * 60)
-    logger.info("IMI Foundation Training — Full Fine-Tuning on 8× A100 80GB")
+    logger.info("IMI Foundation Training — Full Fine-Tuning Mistral 7B")
     logger.info("=" * 60)
     logger.info(f"Base model:         {base_model}")
     logger.info(f"Data dir:           {data_path}")
@@ -355,9 +358,10 @@ def train_foundation(
 
     if not deepspeed_config:
         logger.warning(
-            "No DeepSpeed config provided! Without ZeRO Stage 3, full fine-tuning "
-            "of Mixtral 8x7B WILL run out of memory on 8× A100 80GB.\n"
-            "  Pass: --deepspeed configs/deepspeed_zero3.json"
+            "No DeepSpeed config provided! Without ZeRO + CPU optimizer offload, "
+            "full fine-tuning of Mistral 7B requires ~90 GB GPU VRAM (model + grads + optimizer).\n"
+            "  Recommended: --deepspeed configs/deepspeed_zero3.json  (offloads optimizer to CPU)\n"
+            "  Single A100 80GB is fine WITH the DeepSpeed config."
         )
 
     # GPU info
@@ -436,7 +440,7 @@ def train_foundation(
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Total parameters:     {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,} (100% — full fine-tuning)")
+    logger.info(f"Trainable parameters: {trainable_params:,} (100% — full fine-tuning all 7B params)")
 
     # Training arguments
     training_args = TrainingArguments(
@@ -510,7 +514,7 @@ def train_foundation(
     logger.info("=" * 60)
     logger.info("Foundation training complete!")
     logger.info(f"Next step: python scripts/training/finetune_mixtral.py \\")
-    logger.info(f"    --base-model {output_path} --gpu-tier A100_80GB")
+    logger.info(f"    --base-model {output_path} --gpu-tier A100_40GB")
     logger.info("=" * 60)
 
     return output_path

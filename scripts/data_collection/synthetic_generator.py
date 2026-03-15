@@ -877,10 +877,319 @@ Provide differential diagnosis and recommended workup."""
             }
         }
     
+    # =========================================================================
+    # NEW SPECIALTY GENERATORS
+    # =========================================================================
+
+    def generate_oncology_case(self) -> Dict[str, Any]:
+        """Generate oncology case: cancer staging, chemo protocols, management."""
+        cancers = [
+            {"type": "Non-Small Cell Lung Cancer", "stages": ["IA", "IB", "IIA", "IIB", "IIIA", "IIIB", "IV"],
+             "markers": ["EGFR mutation", "ALK rearrangement", "PD-L1 expression", "KRAS mutation"],
+             "chemo": ["carboplatin + paclitaxel", "cisplatin + pemetrexed", "pembrolizumab", "osimertinib"]},
+            {"type": "Breast Cancer", "stages": ["I", "IIA", "IIB", "IIIA", "IIIB", "IIIC", "IV"],
+             "markers": ["ER+", "PR+", "HER2+", "triple negative"],
+             "chemo": ["AC-T (doxorubicin + cyclophosphamide, then paclitaxel)", "trastuzumab", "tamoxifen", "anastrozole"]},
+            {"type": "Colorectal Cancer", "stages": ["I", "IIA", "IIB", "IIIA", "IIIB", "IIIC", "IVA", "IVB"],
+             "markers": ["KRAS wild-type", "MSI-H", "BRAF V600E", "HER2 amplification"],
+             "chemo": ["FOLFOX", "FOLFIRI", "bevacizumab", "cetuximab"]},
+            {"type": "Prostate Cancer", "stages": ["I", "IIA", "IIB", "IIC", "IIIA", "IIIB", "IIIC", "IVA", "IVB"],
+             "markers": ["PSA level", "Gleason score", "AR-V7", "BRCA2 mutation"],
+             "chemo": ["enzalutamide", "abiraterone", "docetaxel", "olaparib"]},
+        ]
+        cancer = random.choice(cancers)
+        stage = random.choice(cancer["stages"])
+        marker = random.choice(cancer["markers"])
+        regimen = random.choice(cancer["chemo"])
+        age = random.randint(45, 80)
+        templates = [
+            {
+                "instruction": f"A {age}-year-old patient is diagnosed with Stage {stage} {cancer['type']} with {marker}. What is the recommended treatment approach?",
+                "output": (
+                    f"For Stage {stage} {cancer['type']} with {marker}, management should be individualized and ideally discussed at a multidisciplinary tumor board. "
+                    f"Based on current NCCN guidelines, standard first-line options may include {regimen}. "
+                    f"The presence of {marker} has specific treatment implications: targeted therapies may be preferred if actionable mutations are present. "
+                    f"Staging workup should include CT chest/abdomen/pelvis, PET scan if indicated, and molecular profiling. "
+                    f"Performance status, comorbidities, and patient preferences are critical in treatment selection. "
+                    f"All treatment decisions should be made by the treating oncology team with patient-centered shared decision-making."
+                ),
+            },
+            {
+                "instruction": f"Explain the role of {marker} in {cancer['type']} and how it influences treatment decisions.",
+                "output": (
+                    f"{marker} in {cancer['type']} is an important biomarker that guides treatment selection. "
+                    f"When present, it may predict response to specific targeted therapies and inform prognosis. "
+                    f"Testing for {marker} is recommended at diagnosis for all eligible patients with {cancer['type']} "
+                    f"to enable precision oncology approaches. The treating oncologist interprets biomarker results "
+                    f"in the context of the full clinical picture, including stage, performance status, and prior therapies."
+                ),
+            },
+        ]
+        t = random.choice(templates)
+        return {
+            "instruction": t["instruction"],
+            "input": "",
+            "output": t["output"],
+            "source": "synthetic_oncology",
+            "adapter": "clinical_decision",
+            "metadata": {"cancer_type": cancer["type"], "stage": stage, "marker": marker},
+        }
+
+    def generate_pediatric_case(self) -> Dict[str, Any]:
+        """Generate pediatric triage case: dosing, milestones, vaccinations."""
+        scenarios = [
+            {
+                "instruction": "A 6-month-old infant has a rectal temperature of 38.5°C (101.3°F) for 12 hours. No other symptoms. What is the appropriate guidance?",
+                "output": (
+                    "Fever in a 6-month-old requires careful evaluation. At this age, infants have maturing immune systems. "
+                    "Key assessment points: duration, associated symptoms (rash, feeding, activity level), vaccination history, and sick contacts. "
+                    "A temperature of 38.5°C in a 6-month-old without other symptoms is generally less alarming than in a neonate (<3 months), "
+                    "but the infant should be evaluated by a pediatrician. Red flags requiring urgent evaluation include: "
+                    "temperature >39°C, inconsolable crying, bulging fontanelle, rash, poor feeding, or lethargy. "
+                    "Parents should be instructed not to administer adult fever medications. Pediatric acetaminophen (15 mg/kg/dose q4-6h) "
+                    "or ibuprofen (for infants ≥6 months, 10 mg/kg/dose q6-8h) may be used for comfort per pediatrician guidance. "
+                    "ALWAYS advise parents to contact their pediatrician for specific dosing and evaluation."
+                ),
+            },
+            {
+                "instruction": "What vaccinations should a healthy 12-month-old child receive at their well-child visit?",
+                "output": (
+                    "Per the CDC/ACIP recommended immunization schedule, a 12-month-old typically receives the following vaccines: "
+                    "1. MMR (Measles, Mumps, Rubella) — first dose\n"
+                    "2. Varicella (Chickenpox) — first dose\n"
+                    "3. Hepatitis A — first dose (second dose 6-18 months later)\n"
+                    "4. PCV15 or PCV20 (Pneumococcal conjugate) — fourth dose, if using PCV13 schedule\n"
+                    "Additionally, catch-up vaccines may be administered based on prior vaccination history. "
+                    "The child's pediatrician will review the complete vaccination record and administer vaccines per the current schedule. "
+                    "Always verify with the CDC immunization schedule or the child's healthcare provider for the most current recommendations."
+                ),
+            },
+            {
+                "instruction": "A 4-year-old child (18 kg) with strep throat needs amoxicillin. What is the appropriate dosing guidance?",
+                "output": (
+                    "For Group A Streptococcal pharyngitis in children, amoxicillin is the recommended first-line antibiotic. "
+                    "Standard pediatric dosing per IDSA guidelines is 50 mg/kg/day divided twice daily (max 1000 mg/day), "
+                    "or 25 mg/kg twice daily — for this 18 kg child, approximately 450 mg twice daily. "
+                    "Duration: 10 days is the standard course for GAS pharyngitis. "
+                    "IMPORTANT: All antibiotic prescribing for children requires evaluation by a licensed pediatrician or provider. "
+                    "Allergy history, renal function, and proper weight-based dosing must be confirmed by the prescribing clinician. "
+                    "This guidance is educational — the treating provider should prescribe and dose appropriately."
+                ),
+            },
+        ]
+        scenario = random.choice(scenarios)
+        return {
+            "instruction": scenario["instruction"],
+            "input": "",
+            "output": scenario["output"],
+            "source": "synthetic_pediatric",
+            "adapter": "patient_triage",
+            "metadata": {"domain": "pediatrics"},
+        }
+
+    def generate_mental_health_case(self) -> Dict[str, Any]:
+        """Generate mental health dialogue: therapy, crisis protocol, psychoeducation."""
+        scenarios = [
+            {
+                "instruction": "A patient says: 'I've been feeling completely hopeless for the past two weeks. Nothing feels worth doing anymore.' How should I respond?",
+                "output": (
+                    "Thank you for sharing that with me — it takes courage to express how you're feeling. "
+                    "What you're describing — persistent hopelessness and loss of interest in activities — are important symptoms that deserve proper attention. "
+                    "These feelings can be signs of depression, which is a medical condition that responds well to treatment. "
+                    "I want to ask directly: are you having any thoughts of harming yourself or ending your life? "
+                    "Your answer will help me understand how to best support you right now. "
+                    "Regardless, I strongly encourage you to speak with a mental health professional — a therapist, psychologist, or psychiatrist — "
+                    "who can provide a proper assessment and discuss options including therapy, medication, or both. "
+                    "You don't have to carry this alone, and help is available. If you're in crisis right now, please call or text 988 (Suicide & Crisis Lifeline)."
+                ),
+            },
+            {
+                "instruction": "Explain the difference between major depressive disorder and bipolar disorder to a patient in simple terms.",
+                "output": (
+                    "Major depressive disorder (MDD) and bipolar disorder are both mood conditions, but they differ in an important way. "
+                    "In MDD, a person experiences persistent low moods (depression) — feeling sad, empty, hopeless, losing interest in things they used to enjoy. "
+                    "In bipolar disorder, the person experiences episodes of both low mood (depression) AND high mood (called mania or hypomania). "
+                    "During mania, a person might feel unusually energized, need very little sleep, have racing thoughts, take risky decisions, or feel 'on top of the world.' "
+                    "The distinction matters for treatment: antidepressants alone (without mood stabilizers) can sometimes trigger mania in someone with bipolar disorder. "
+                    "That's why proper diagnosis by a psychiatrist is essential before starting any treatment. "
+                    "Both conditions are treatable with the right support, therapy, and when appropriate, medication."
+                ),
+            },
+            {
+                "instruction": "A patient reports panic attacks occurring 3-4 times per week. What educational information is appropriate?",
+                "output": (
+                    "Panic attacks are sudden surges of intense fear or discomfort that peak within minutes and involve physical symptoms such as: "
+                    "rapid heartbeat, chest tightness, shortness of breath, dizziness, sweating, trembling, or a feeling of unreality. "
+                    "Experiencing 3-4 panic attacks per week significantly impacts quality of life and warrants professional evaluation. "
+                    "Panic disorder (recurrent unexpected panic attacks with associated worry) is highly treatable. "
+                    "Evidence-based treatments include: Cognitive Behavioral Therapy (CBT) — specifically panic-focused CBT — which teaches "
+                    "you to understand and change thought patterns that contribute to panic, and breathing/relaxation techniques. "
+                    "Medications such as SSRIs or SNRIs are effective first-line pharmacological options. "
+                    "I strongly encourage evaluation by a mental health professional for a proper diagnosis and treatment plan."
+                ),
+            },
+        ]
+        scenario = random.choice(scenarios)
+        return {
+            "instruction": scenario["instruction"],
+            "input": "",
+            "output": scenario["output"],
+            "source": "synthetic_mental_health",
+            "adapter": "patient_triage",
+            "metadata": {"domain": "mental_health"},
+        }
+
+    def generate_cardiology_case(self) -> Dict[str, Any]:
+        """Generate cardiology case: ECG interpretation text, heart failure, ACS."""
+        scenarios = [
+            {
+                "instruction": "A 62-year-old male presents with 30 minutes of crushing substernal chest pain radiating to the left arm. ECG shows ST elevation in leads II, III, aVF. What is the immediate management approach?",
+                "output": (
+                    "This presentation is consistent with an Inferior ST-Elevation Myocardial Infarction (STEMI) — a medical emergency. "
+                    "Immediate actions (time-critical — 'door-to-balloon' target <90 minutes):\n"
+                    "1. Activate cardiac catheterization lab (primary PCI is treatment of choice)\n"
+                    "2. IV access, continuous cardiac monitoring, defibrillator at bedside\n"
+                    "3. Aspirin 325 mg (if not contraindicated) + P2Y12 inhibitor (ticagrelor or clopidogrel)\n"
+                    "4. Anticoagulation: unfractionated heparin or bivalirudin\n"
+                    "5. Supplemental oxygen only if SpO2 <90%\n"
+                    "6. Obtain urgent cardiology consultation\n"
+                    "Key monitoring: right-sided ECG leads (V3R-V4R) to rule out right ventricular infarction, "
+                    "which would contraindicate nitrates. Fibrinolysis only if primary PCI unavailable within 120 minutes. "
+                    "This is an emergency — the treating team implements STEMI protocol immediately."
+                ),
+            },
+            {
+                "instruction": "Explain the NYHA classification of heart failure and its clinical significance.",
+                "output": (
+                    "The New York Heart Association (NYHA) functional classification grades heart failure severity based on symptoms during physical activity:\n\n"
+                    "Class I: No limitation of physical activity. Ordinary activity does not cause fatigue, dyspnea, or palpitations.\n"
+                    "Class II: Slight limitation. Comfortable at rest; ordinary activity causes symptoms.\n"
+                    "Class III: Marked limitation. Comfortable at rest; less-than-ordinary activity causes symptoms.\n"
+                    "Class IV: Symptoms at rest or with any physical activity; inability to perform any physical activity without discomfort.\n\n"
+                    "Clinical significance: NYHA class guides treatment intensity, medication titration, and device eligibility "
+                    "(e.g., ICD/CRT indicated for certain patients with NYHA Class II-III and reduced ejection fraction). "
+                    "It also predicts prognosis and is used in clinical trial enrollment criteria. "
+                    "NYHA class is assessed at each visit and improves with optimal medical therapy."
+                ),
+            },
+            {
+                "instruction": "What is the first-line medical treatment for HFrEF (Heart Failure with Reduced Ejection Fraction)?",
+                "output": (
+                    "For HFrEF (EF <40%), guideline-directed medical therapy (GDMT) includes four cornerstone drug classes "
+                    "with proven mortality benefit:\n"
+                    "1. ACE inhibitor or ARB or ARNI (sacubitril/valsartan) — preferred over ACEi for ambulatory patients\n"
+                    "2. Beta-blocker (carvedilol, metoprolol succinate, or bisoprolol — only these three have evidence)\n"
+                    "3. Mineralocorticoid receptor antagonist (spironolactone or eplerenone) — if eGFR and K+ allow\n"
+                    "4. SGLT2 inhibitor (dapagliflozin or empagliflozin) — now Class I recommendation per 2022 AHA/ACC guidelines\n\n"
+                    "All four should be initiated and up-titrated to target doses as tolerated. "
+                    "Diuretics (furosemide) address congestion but do not improve mortality. "
+                    "Device therapy (ICD for primary prevention if EF ≤35%) should be considered after 3+ months of GDMT. "
+                    "Cardiology specialist management is essential for HFrEF."
+                ),
+            },
+        ]
+        scenario = random.choice(scenarios)
+        return {
+            "instruction": scenario["instruction"],
+            "input": "",
+            "output": scenario["output"],
+            "source": "synthetic_cardiology",
+            "adapter": "clinical_decision",
+            "metadata": {"domain": "cardiology"},
+        }
+
+    def generate_icu_case(self) -> Dict[str, Any]:
+        """Generate ICU/critical care case: sepsis, ventilator management, shock."""
+        scenarios = [
+            {
+                "instruction": "A 55-year-old patient in the ICU meets sepsis criteria (suspected pneumonia source, HR 118, RR 24, temp 39.2°C, WBC 18K, lactate 2.8 mmol/L). What is the Hour-1 Bundle approach?",
+                "output": (
+                    "This patient meets sepsis criteria (qSOFA ≥2, suspected infection, organ dysfunction). "
+                    "Per the Surviving Sepsis Campaign Hour-1 Bundle, the following should be completed within 1 hour of recognition:\n"
+                    "1. Measure lactate — already done (2.8 mmol/L indicates tissue hypoperfusion)\n"
+                    "2. Blood cultures × 2 sets before antibiotics (but do NOT delay antibiotics >45 minutes for culture collection)\n"
+                    "3. Broad-spectrum antibiotics — empiric coverage based on likely source (pneumonia: piperacillin-tazobactam or cefepime ± vancomycin)\n"
+                    "4. 30 mL/kg IV crystalloid bolus for hypotension or lactate ≥4 mmol/L — reassess frequently\n"
+                    "5. Vasopressors (norepinephrine first-line) if MAP <65 mmHg despite fluid resuscitation\n"
+                    "Reassess lactate at 2 hours if initial lactate was elevated. "
+                    "ICU-level monitoring, hourly urine output, and continuous hemodynamic assessment are required. "
+                    "This protocol is implemented by the critical care team."
+                ),
+            },
+            {
+                "instruction": "What are the lung-protective ventilation strategies for ARDS patients?",
+                "output": (
+                    "Lung-protective ventilation is the cornerstone of ARDS management, based on the landmark ARDSNet trial:\n\n"
+                    "Key parameters:\n"
+                    "• Tidal volume: 6 mL/kg ideal body weight (IBW) — NOT actual body weight\n"
+                    "• Plateau pressure: ≤30 cmH2O\n"
+                    "• Driving pressure: ≤15 cmH2O (Pplat − PEEP)\n"
+                    "• PEEP: Higher PEEP strategy for moderate-severe ARDS (FiO2/PEEP titration table)\n"
+                    "• FiO2: Titrate to maintain SpO2 88-95% or PaO2 55-80 mmHg\n\n"
+                    "Additional strategies for moderate-severe ARDS (P/F ratio <150):\n"
+                    "• Prone positioning ≥16 hours/day — mortality benefit demonstrated in PROSEVA trial\n"
+                    "• Neuromuscular blockade (cisatracurium) for the first 48 hours in severe ARDS\n"
+                    "• Conservative fluid strategy after resuscitation phase\n\n"
+                    "Permissive hypercapnia (PaCO2 up to 60 mmHg) is acceptable to maintain lung-protective targets. "
+                    "Management by experienced critical care team is essential."
+                ),
+            },
+        ]
+        scenario = random.choice(scenarios)
+        return {
+            "instruction": scenario["instruction"],
+            "input": "",
+            "output": scenario["output"],
+            "source": "synthetic_icu",
+            "adapter": "clinical_decision",
+            "metadata": {"domain": "critical_care"},
+        }
+
+    def generate_cot_pair(self) -> Dict[str, Any]:
+        """
+        Generate a Chain-of-Thought training pair.
+
+        Wraps an existing instruction pair with explicit reasoning scaffold:
+            <think>step-by-step reasoning</think>
+            <answer>final response</answer>
+
+        Targets complex clinical reasoning tasks.
+        """
+        base_generators = [
+            self.generate_clinical_case,
+            self.generate_drug_interaction_example,
+            self.generate_usmle_question,
+            self.generate_oncology_case,
+            self.generate_cardiology_case,
+        ]
+        base = random.choice(base_generators)()
+
+        instruction = base.get("instruction", base.get("question", ""))
+        base_answer = base.get("output", base.get("answer", ""))
+
+        think_steps = (
+            "Step 1: Identify the key clinical question and relevant patient details.\n"
+            "Step 2: Recall relevant pathophysiology, pharmacology, or guidelines.\n"
+            "Step 3: Consider differentials or alternative approaches.\n"
+            "Step 4: Apply evidence-based reasoning to reach a conclusion.\n"
+            "Step 5: Add safety caveats and recommendations for professional consultation."
+        )
+
+        cot_output = f"<think>\n{think_steps}\n</think>\n<answer>\n{base_answer}\n</answer>"
+
+        return {
+            "instruction": instruction,
+            "input": "",
+            "output": cot_output,
+            "source": "synthetic_cot",
+            "adapter": base.get("adapter", "clinical_decision"),
+            "metadata": {"cot": True, "base_source": base.get("source", "")},
+        }
+
     def generate_dataset(self, num_examples: int = 1000) -> Dict[str, List[Dict]]:
         """Generate complete synthetic dataset"""
         logger.info(f"Generating {num_examples} synthetic examples...")
-        
+
         datasets = {
             "patient_triage": [],
             "clinical_pharmacist": [],
@@ -888,20 +1197,73 @@ Provide differential diagnosis and recommended workup."""
             "education": [],
             "regulatory_qa": [],
         }
-        
+
         # Distribution of examples
         distribution = {
-            "triage": 0.25,
-            "interaction": 0.15,
-            "clinical": 0.20,
-            "usmle": 0.25,
-            "regulatory": 0.15,
+            "triage": 0.15,
+            "interaction": 0.10,
+            "clinical": 0.15,
+            "usmle": 0.15,
+            "regulatory": 0.10,
+            "oncology": 0.10,
+            "pediatric": 0.08,
+            "mental_health": 0.07,
+            "cardiology": 0.07,
+            "icu": 0.05,
+            "cot": 0.08,
         }
-        
+
+        cumulative = {}
+        total = 0.0
+        for k, v in distribution.items():
+            total += v
+            cumulative[k] = total
+
         for i in range(num_examples):
             r = random.random()
-            
-            if r < distribution["triage"]:
+
+            if r < cumulative["triage"]:
+                example = self.generate_triage_training_example()
+                datasets["patient_triage"].append(example)
+            elif r < cumulative["interaction"]:
+                example = self.generate_drug_interaction_example()
+                datasets["clinical_pharmacist"].append(example)
+            elif r < cumulative["clinical"]:
+                example = self.generate_clinical_case()
+                datasets["clinical_decision"].append(example)
+            elif r < cumulative["usmle"]:
+                example = self.generate_usmle_question()
+                datasets["education"].append(example)
+            elif r < cumulative["regulatory"]:
+                example = self.generate_regulatory_scenario()
+                datasets["regulatory_qa"].append(example)
+            elif r < cumulative["oncology"]:
+                example = self.generate_oncology_case()
+                datasets["clinical_decision"].append(example)
+            elif r < cumulative["pediatric"]:
+                example = self.generate_pediatric_case()
+                datasets["patient_triage"].append(example)
+            elif r < cumulative["mental_health"]:
+                example = self.generate_mental_health_case()
+                datasets["patient_triage"].append(example)
+            elif r < cumulative["cardiology"]:
+                example = self.generate_cardiology_case()
+                datasets["clinical_decision"].append(example)
+            elif r < cumulative["icu"]:
+                example = self.generate_icu_case()
+                datasets["clinical_decision"].append(example)
+            else:
+                example = self.generate_cot_pair()
+                adapter = example.get("adapter", "clinical_decision")
+                if adapter in datasets:
+                    datasets[adapter].append(example)
+                else:
+                    datasets["clinical_decision"].append(example)
+
+            if (i + 1) % 100 == 0:
+                logger.info(f"  Generated {i + 1}/{num_examples} examples")
+
+        return datasets
                 example = self.generate_triage_training_example()
                 datasets["patient_triage"].append(example)
             elif r < distribution["triage"] + distribution["interaction"]:

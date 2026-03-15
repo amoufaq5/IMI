@@ -196,7 +196,7 @@ class ModelEvaluator:
 
     def __init__(
         self,
-        model_path: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        model_path: str = "mistralai/Mistral-7B-Instruct-v0.3",
     ):
         self.base_model_name = model_path
         self.model = None

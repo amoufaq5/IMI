@@ -74,6 +74,34 @@ GENERAL_KNOWLEDGE_SOURCES = {
     "sciq",                   # science knowledge passages
     "drug_reviews",           # drug information text
     "phi_drug",               # drug information
+    # ── New biomedical corpus sources (collect_biomedical_corpus.py) ──────
+    "pubmed_cardiology_reviews",
+    "pubmed_oncology_reviews",
+    "pubmed_endocrinology_reviews",
+    "pubmed_neurology_reviews",
+    "pubmed_psychiatry_reviews",
+    "pubmed_infectious_disease_reviews",
+    "pubmed_pediatrics_reviews",
+    "pubmed_clinical_guidelines",
+    "pubmed_drug_interactions",
+    "pubmed_adverse_drug_reactions",
+    "pubmed_emergency_triage",
+    "pubmed_pharmacogenomics",
+    "pubmed_icu_sepsis",
+    "pubmed_surgery",
+    "pubmed_rare_diseases",
+    "pmc_rct_full_text",
+    "pmc_pharma_reviews",
+    "pmc_case_reports",
+    "litcovid",
+    "biorxiv_preprint",
+    "medrxiv_preprint",
+    "semantic_scholar",
+    "pubmed_200k_rct",
+    "cord19_qa",
+    "s2orc",
+    "medmentions",
+    "jnlpba",
 }
 
 # Adapters whose processed data is encyclopedic rather than Q&A
@@ -233,7 +261,12 @@ def to_instruction(example: Dict[str, Any]) -> Optional[Dict[str, str]]:
 # =============================================================================
 
 def load_all_raw_examples(data_dir: Path) -> List[Dict[str, Any]]:
-    """Load every JSON file from all relevant source directories."""
+    """Load every JSON / JSONL file from all relevant source directories.
+
+    Supports:
+      .json  — array or single-object files (legacy format)
+      .jsonl — newline-delimited JSON (collect_biomedical_corpus.py output)
+    """
     all_examples: List[Dict[str, Any]] = []
     source_dirs = [
         data_dir / "processed",
@@ -244,19 +277,30 @@ def load_all_raw_examples(data_dir: Path) -> List[Dict[str, Any]]:
     for source_dir in source_dirs:
         if not source_dir.exists():
             continue
-        # Recurse into subdirectories (processed/{adapter_name}/*.json)
-        json_files = list(source_dir.rglob("*.json"))
-        for jf in json_files:
+        # Recurse into subdirectories
+        all_files = list(source_dir.rglob("*.json")) + list(source_dir.rglob("*.jsonl"))
+        for jf in all_files:
             try:
-                with open(jf) as f:
-                    content = f.read().strip()
-                if not content:
-                    continue
-                data = json.loads(content)
-                if isinstance(data, list):
-                    all_examples.extend(data)
-                elif isinstance(data, dict):
-                    all_examples.append(data)
+                if jf.suffix == ".jsonl":
+                    # JSONL: one record per line
+                    with open(jf) as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    all_examples.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    pass
+                else:
+                    with open(jf) as f:
+                        content = f.read().strip()
+                    if not content:
+                        continue
+                    data = json.loads(content)
+                    if isinstance(data, list):
+                        all_examples.extend(data)
+                    elif isinstance(data, dict):
+                        all_examples.append(data)
                 logger.debug(f"  Loaded {jf.relative_to(data_dir)}")
             except Exception as e:
                 logger.warning(f"  Could not load {jf.name}: {e}")
