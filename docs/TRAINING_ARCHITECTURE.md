@@ -1,10 +1,10 @@
-# IMI Training Architecture — Full Fine-Tuning on H100
+# IMI Training Architecture — Mistral 7B Full Fine-Tuning
 
 ## Training Pipeline Overview
 
 ```
 +===========================================================================+
-|                    IMI TRAINING PIPELINE (H100 Full FT)                    |
+|               IMI TRAINING PIPELINE — Mistral 7B Full Fine-Tuning         |
 +===========================================================================+
 
    PHASE 1: DATA COLLECTION          PHASE 2: PREPROCESSING
@@ -58,46 +58,43 @@
                                                |
                                                v
    =================================================================
-   PHASE 3: FOUNDATION TRAINING (Full Fine-Tuning on H100)
+   PHASE 3: FOUNDATION TRAINING (Full Fine-Tuning — 1× A100 80GB)
    =================================================================
 
    +---------------------------------------------------------------+
    |                                                               |
-   |   Base Model: Mixtral 8x7B Instruct v0.1                     |
-   |   (46.7B parameters — ALL trainable, no LoRA)                 |
+   |   Base Model: Mistral-7B-Instruct-v0.3                       |
+   |   (7B parameters — ALL trainable, no LoRA)                   |
    |                                                               |
    |   +-------------------+    +-----------------------------+    |
-   |   | Model Loading     |    | H100 Optimizations          |    |
+   |   | Model Loading     |    | A100/H100 Optimizations     |    |
    |   |                   |    |                             |    |
    |   | - BFloat16        |    | - Flash Attention 2         |    |
    |   | - No quantization |    | - TF32 matmul enabled       |    |
-   |   | - Full parameters |    | - torch.compile()           |    |
-   |   | - device_map=auto |    | - Fused AdamW optimizer     |    |
-   |   +-------------------+    | - Gradient checkpointing    |    |
-   |                            | - Sequence packing          |    |
-   |                            | - Pin memory + 8 workers    |    |
+   |   | - Full parameters |    | - Gradient checkpointing    |    |
+   |   | - device_map=auto |    | - Sequence packing          |    |
+   |   +-------------------+    | - Pin memory + 4 workers    |    |
+   |                            | - DeepSpeed CPU offload     |    |
    |                            +-----------------------------+    |
    |                                                               |
-   |   Training Config:                                            |
+   |   Training Config (single A100 80GB):                        |
    |   +-------------------------------------------------------+  |
-   |   | Epochs:           2                                    |  |
+   |   | Epochs:           3                                    |  |
    |   | Per-device batch: 4                                    |  |
-   |   | Grad accumulation: 8  (effective batch = 32 * N_GPUs)  |  |
+   |   | Grad accumulation: 4  (effective batch = 16)           |  |
    |   | Learning rate:    2e-5 (cosine schedule)               |  |
-   |   | Warmup:           5%                                   |  |
-   |   | Max seq length:   4096                                 |  |
+   |   | Warmup:           3%                                   |  |
+   |   | Max seq length:   2048                                 |  |
    |   | Precision:        BFloat16                             |  |
-   |   | Optimizer:        AdamW (fused, torch)                 |  |
-   |   | Weight decay:     0.01                                 |  |
+   |   | Optimizer:        AdamW (CPU offloaded via ZeRO-3)     |  |
+   |   | GPU memory:       ~38 GB  (42 GB headroom on 80GB)     |  |
    |   +-------------------------------------------------------+  |
    |                                                               |
-   |   Multi-GPU Strategy (for 2+ H100s):                         |
+   |   Optional multi-GPU (faster):                               |
    |   +-------------------------------------------------------+  |
-   |   | DeepSpeed ZeRO Stage 3 or PyTorch FSDP                |  |
-   |   | - Shards optimizer state across GPUs                   |  |
-   |   | - Shards gradients across GPUs                         |  |
-   |   | - Shards parameters across GPUs                        |  |
-   |   | - Enables full FT of 46.7B model on H100 cluster       |  |
+   |   | torchrun --nproc_per_node=4 train_foundation.py        |  |
+   |   | + configs/deepspeed_zero3.json                         |  |
+   |   | 4× A100 80GB: ~2× faster, each GPU uses ~20 GB        |  |
    |   +-------------------------------------------------------+  |
    |                                                               |
    +---------------------------------------------------------------+
@@ -106,29 +103,30 @@
                +---------------------+
                | models/foundation/  |
                | (Full fine-tuned    |
-               |  Mixtral 8x7B)      |
+               |  Mistral 7B)        |
                +---------------------+
                           |
                           v
    =================================================================
-   PHASE 4: DPO SAFETY ALIGNMENT (Full Fine-Tuning on H100)
+   PHASE 4: ORPO SAFETY ALIGNMENT (Full Fine-Tuning — 1× A100 40GB)
    =================================================================
 
    +---------------------------------------------------------------+
    |                                                               |
-   |  Direct Preference Optimization (DPO)                         |
+   |  ORPO — Odds Ratio Preference Optimization                    |
+   |  (replaces DPO — combined SFT + preference loss)             |
    |                                                               |
    |  Input: Safety pairs (prompt, chosen=safe, rejected=unsafe)   |
    |                                                               |
-   |  +-------------------------+  +----------------------------+  |
-   |  | Training Model          |  | Reference Model (frozen)   |  |
-   |  | (all params trainable)  |  | (same foundation weights)  |  |
-   |  |                         |  |                            |  |
-   |  | Learns to prefer safe   |  | Provides baseline policy   |  |
-   |  | responses over unsafe   |  | for KL divergence penalty  |  |
-   |  +-------------------------+  +----------------------------+  |
+   |  +------------------------------------------+                |
+   |  | Single Training Model (no ref model)     |                |
+   |  | (all params trainable)                   |                |
+   |  |                                          |                |
+   |  | Joint loss = SFT loss + odds-ratio loss  |                |
+   |  | No reference model → saves ~14 GB GPU    |                |
+   |  +------------------------------------------+                |
    |                                                               |
-   |  Safety Categories:                                           |
+   |  Safety Categories (30+ seed pairs, expand to 500+):         |
    |  +-------------------------------------------------------+   |
    |  | - Medication dosing (hedge vs specific dose)            |   |
    |  | - Emergency symptoms (escalate vs dismiss)              |   |
@@ -136,19 +134,20 @@
    |  | - Diagnosis requests (caveat vs confident dx)           |   |
    |  | - Off-label drug use (caveat vs recommend)              |   |
    |  | - Scope boundaries (decline vs attempt)                 |   |
-   |  | - Overconfident language (calibrated vs absolute)        |   |
+   |  | - Overconfident language (calibrated vs absolute)       |   |
    |  +-------------------------------------------------------+   |
    |                                                               |
-   |  Config: beta=0.1, lr=5e-7, BFloat16, Flash Attn 2           |
+   |  Config: beta=0.1, lr=8e-6, BFloat16, Flash Attn 2           |
+   |  Hardware: 1× A100 40GB (model=14GB + optimizer fits easily)  |
    |                                                               |
    +---------------------------------------------------------------+
                           |
                           v
-               +---------------------+
-               | models/dpo_aligned/ |
-               | (Safety-aligned     |
-               |  Mixtral 8x7B)      |
-               +---------------------+
+               +----------------------+
+               | models/orpo_aligned/ |
+               | (Safety-aligned      |
+               |  Mistral 7B)         |
+               +----------------------+
                           |
                           v
    =================================================================
@@ -191,25 +190,28 @@
 
    +---------------------------------------------------------------+
    |                                                               |
-   |  RECOMMENDED: NVIDIA H100 80GB HBM3                           |
+   |  MINIMUM: 1× A100 40GB (QLoRA adapter training)               |
+   |  RECOMMENDED: 1× A100 80GB (foundation + adapters)            |
    |                                                               |
-   |  Single H100:                                                 |
-   |  - Foundation training with gradient checkpointing            |
-   |  - ~80GB VRAM utilization                                     |
-   |  - Estimated: 24-48 hours for 2 epochs on ~3M examples        |
+   |  Single A100 80GB (foundation training):                      |
+   |  - Full 7B parameter training with DeepSpeed CPU offload      |
+   |  - ~38 GB GPU VRAM, ~56 GB CPU RAM for optimizer              |
+   |  - Estimated: 2 hrs (500K examples) / 8 hrs (4M examples)     |
    |                                                               |
-   |  Multi-H100 (recommended for production):                     |
-   |  - 4x H100 with DeepSpeed ZeRO-3                             |
-   |  - ~20GB VRAM per GPU (params sharded)                        |
-   |  - Estimated: 6-12 hours for 2 epochs on ~3M examples         |
-   |  - 8x H100: ~3-6 hours                                       |
+   |  Single A100 40GB (adapter QLoRA):                            |
+   |  - Mistral 7B in 4-bit NF4 ≈ 6 GB base                       |
+   |  - batch=4, seq=2048: ~28 GB total VRAM                       |
+   |  - Estimated: 1–3 hrs per adapter                             |
    |                                                               |
-   |  Key H100 Features Utilized:                                  |
-   |  - BFloat16 native (no quantization needed)                   |
-   |  - TF32 matmul (1.5x speedup over FP32)                      |
+   |  8× A100 80GB (your setup — fast foundation):                 |
+   |  - ZeRO-3: each GPU holds 7B/8 = ~1.75 GB model shard        |
+   |  - Foundation 4M examples: ~1.5 hrs, cost ~$24               |
+   |                                                               |
+   |  Key GPU Features Utilized:                                   |
+   |  - BFloat16 native (no quantization needed for FT)            |
+   |  - TF32 matmul (1.5x speedup over FP32 on A100/H100)         |
    |  - Flash Attention 2 (memory-efficient attention)             |
-   |  - 3.35 TB/s memory bandwidth                                 |
-   |  - torch.compile() graph optimization                         |
+   |  - DeepSpeed ZeRO-3 + CPU optimizer offload                   |
    |                                                               |
    +---------------------------------------------------------------+
 
@@ -227,10 +229,10 @@
    data/final/ (clean training data)
           |
           v
-   Foundation Training (full FT, H100, BF16, all params)
+   Foundation Training (full FT, A100 80GB, BF16, all 7B params)
           |
           v
-   DPO Safety Alignment (full FT, H100, safety pairs)
+   ORPO Safety Alignment (full FT, A100 40GB, safety pairs)
           |
           v
    Evaluation (perplexity, MCQ, triage, safety audit)
@@ -239,16 +241,17 @@
    Production Deployment (if all metrics pass)
 ```
 
-## Comparison: Previous (LoRA) vs Current (Full FT on H100)
+## Comparison: QLoRA Only vs Full Fine-Tuning (Mistral 7B)
 
-| Aspect | Previous (LoRA/QLoRA) | Current (Full FT on H100) |
-|--------|----------------------|---------------------------|
-| Parameters trained | ~0.5% (LoRA adapters) | 100% (all 46.7B) |
-| Precision | 4-bit NF4 quantized | BFloat16 native |
-| GPU | A100 80GB | H100 80GB |
-| Memory | ~52GB (quantized) | ~80GB (full precision) |
-| Quality ceiling | Limited by frozen base | Maximized — full capacity |
-| Training speed | Fast per step | Leverages H100 hardware |
-| Adapter complexity | 6 separate adapters | Single unified model |
-| Deployment | Adapter hot-swap | Single model, simpler |
-| Safety alignment | LoRA on top of LoRA | Full parameter DPO |
+| Aspect | QLoRA Only (Path A) | Full FT + ORPO + QLoRA (Path B) |
+|--------|---------------------|----------------------------------|
+| Parameters trained | ~0.5% (LoRA adapters) | 100% (all 7B) foundation + adapters |
+| Foundation GPU | None needed | 1× A100 80GB + CPU offload |
+| Adapter GPU | 1× A100 40GB | 1× A100 40GB |
+| Precision | 4-bit NF4 | BFloat16 (foundation), 4-bit (adapters) |
+| Foundation cost | $0 | ~$4–24 |
+| Adapter cost | ~$4 total | ~$4 total |
+| Quality ceiling | Good for MVP | Higher — full medical domain shift |
+| Safety alignment | ORPO (A100 40GB) | ORPO (A100 40GB) |
+| Deployment | 6 adapters hot-swap | 6 adapters hot-swap |
+| Recommended for | POC, fast iteration | Production, clinical grade |

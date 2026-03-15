@@ -4,7 +4,7 @@
 
 | Feature | Status | Location |
 |---------|--------|----------|
-| Mixtral 8x7B base model | ✅ Done | `settings.py`, `meditron.py`, all training scripts |
+| Mistral 7B base model (MVP/POC) | ✅ Done | `settings.py`, `meditron.py`, all training scripts |
 | 40+ dataset catalogue | ✅ Done | `collect_datasets.py` |
 | 3-stage training pipeline | ✅ Done | `train_foundation.py` → `train_dpo.py` → `train_lora.py` |
 | DPO safety alignment | ✅ Done | `train_dpo.py` (30 seed pairs, expandable) |
@@ -20,11 +20,11 @@
 
 ## Further Recommendations
 
-### 1. Expand DPO Safety Pairs to 500+
+### 1. Expand ORPO Safety Pairs to 500+
 **Priority: HIGH** | **Effort: 2-3 days**
 
-The current 30 seed pairs in `train_dpo.py` cover the core safety categories but production
-training needs 500+ pairs for robust alignment. Recommended approach:
+The current 30 seed pairs in `train_dpo.py` (ORPO mode) cover the core safety categories but
+production training needs 500+ pairs for robust alignment. Recommended approach:
 - Have a medical professional review and expand the seed pairs
 - Add pairs for: pediatric dosing, geriatric concerns, pregnancy safety, drug withdrawal
 - Use red-teaming to discover edge cases the model handles poorly
@@ -62,7 +62,7 @@ After deployment, implement a feedback loop:
 ### 5. Multi-Language Support
 **Priority: MEDIUM** | **Effort: 1-2 weeks**
 
-Mixtral 8x7B already has multilingual capability. To enable:
+Mistral 7B has strong multilingual capability (trained on multilingual data). To enable:
 - Add Arabic and French medical datasets to the training pipeline
 - Create language-detection guardrails
 - Test safety patterns in target languages
@@ -119,29 +119,33 @@ Set up production monitoring:
 
 | Phase | Cost | Timeline |
 |-------|------|----------|
-| MVP (Doctor + Patient) | ~$2,500 | 2 weeks |
-| Full 6-adapter training | ~$5,000 | 3 weeks |
-| Red-teaming + safety expansion | ~$500 | 1 week |
-| Production inference (monthly) | ~$1,000/mo | Ongoing |
-| Continuous learning pipeline | ~$500/quarter | Quarterly |
-| **Total Year 1** | **~$20,000** | |
+| MVP (Doctor + Patient, Mistral 7B) | ~$15–20 | 1 week |
+| Full 6-adapter training | ~$35–50 | 1 week |
+| Red-teaming + safety expansion | ~$50 | 3 days |
+| Production inference (monthly, 1× A100 40GB) | ~$500–800/mo | Ongoing |
+| Continuous learning pipeline | ~$50/quarter | Quarterly |
+| **Total Year 1** | **~$7,000–10,000** | |
 
 ---
 
-## Architecture Comparison: Before vs After
+## Architecture Comparison: Before vs Now
 
-| Aspect | Before (Meditron-7B) | After (Mixtral 8x7B) |
-|--------|---------------------|----------------------|
-| Base model | Meditron-7B (7B params) | Mixtral 8x7B (46.7B active) |
+| Aspect | Before (Meditron-7B) | Now (Mistral 7B — MVP) |
+|--------|---------------------|------------------------|
+| Base model | Meditron-7B (7B params) | Mistral-7B-Instruct-v0.3 (7B params) |
 | License | LLaMA license (restricted) | Apache 2.0 (commercial) |
+| Architecture | Dense transformer | Dense transformer (SwiGLU FFN) |
 | Context window | 4,096 tokens | 32,768 tokens |
-| LoRA rank | r=16, α=32 | r=32, α=64 |
-| Target modules | q_proj, v_proj | q,k,v,o_proj (+ MoE for foundation) |
-| Training pipeline | Single-stage LoRA | 3-stage: Foundation → DPO → LoRA |
-| Safety alignment | None (rule engine only) | DPO + guardrails + rule engine + verifier |
+| LoRA rank | r=16, α=32 | r=32–64, α=64–128 |
+| LoRA targets | q_proj, v_proj | q,k,v,o_proj + gate/up/down_proj |
+| Training pipeline | Single-stage LoRA | 3-stage: Foundation → ORPO → LoRA |
+| Safety alignment | None (rule engine only) | ORPO + guardrails + rule engine + verifier |
+| Alignment method | — | ORPO (no reference model → saves ~14GB GPU) |
 | Inference | Direct HF transformers | vLLM with LoRA hot-swapping |
-| Datasets | ~6 datasets | 40+ datasets (3M+ examples) |
+| Datasets | ~6 datasets | 100+ datasets (~4–5M clean examples) |
+| Min training GPU | A100 40GB | A100 40GB (or RTX 3090 for QLoRA) |
+| Foundation training GPU | 8× A100 80GB | 1× A100 80GB + CPU offload |
+| Foundation training cost | ~$1,500 | ~$4–24 |
+| Full MVP cost | ~$5,000 | **~$35–50** |
 | Evaluation | Basic metrics | 9 metrics with pass/fail thresholds |
-| Experiment tracking | None | Weights & Biases |
-| Parallel training | Round-robin GPU assignment | Wave-based scheduling (1 per GPU) |
 | Compute dtype | float16 | bfloat16 |

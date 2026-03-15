@@ -2,14 +2,14 @@
 
 ## Overview
 
-**IMI** is a 5-layer medical AI platform powered by Mixtral 8x7B with 6 domain-specific LoRA adapters,
+**IMI** is a 5-layer medical AI platform powered by Mistral 7B with 6 domain-specific LoRA adapters,
 deterministic safety guardrails, and a knowledge-graph-backed verification system.
 
 **Key differentiators:**
 - **5-Layer Safety Architecture** — Memory → Knowledge Graph → Rule Engine → LLM → Verifier
-- **Mixtral 8x7B** base with QLoRA adapters per user type (doctor, patient, student, researcher, hospital, pharma)
+- **Mistral 7B** (Apache 2.0) base with QLoRA adapters per user type (doctor, patient, student, researcher, hospital, pharma)
 - **Zero hallucination tolerance** — every LLM output verified against knowledge graph + guidelines
-- **DPO safety alignment** — model trained to prefer safe responses via Direct Preference Optimization
+- **ORPO safety alignment** — combined SFT + preference loss in a single pass (no reference model needed)
 - **Sub-200ms inference** via vLLM with LoRA hot-swapping
 
 ---
@@ -125,26 +125,30 @@ Query → [Layer 0: Memory] → [Layer 1: Knowledge Graph] → [Layer 2: Rule En
 
 | Component | Specification |
 |-----------|--------------|
-| Base Model | Mixtral 8x7B-Instruct (Apache 2.0) |
+| Base Model | Mistral-7B-Instruct-v0.3 (Apache 2.0) |
+| Architecture | Dense transformer, 7B params, 32K context |
 | Quantization | QLoRA 4-bit NF4, bfloat16 compute |
-| Adapters | 6 LoRA adapters (r=32, α=64) |
-| Training Data | 40+ open medical datasets, 3M+ examples |
-| Safety | DPO alignment + regex guardrails + rule engine + verifier |
+| Adapters | 6 LoRA adapters (r=32–64, α=64–128) |
+| LoRA targets | q,k,v,o_proj + gate_proj, up_proj, down_proj |
+| Training Data | 100+ open medical datasets, ~4–5M clean examples (~2B tokens) |
+| Safety | ORPO alignment + regex guardrails + rule engine + verifier |
 | Inference | vLLM with LoRA hot-swap, <200ms p95 latency |
-| Infrastructure | 6×A100 80GB (training), 2×A100 (inference) |
+| Training hardware | 1× A100 80GB (foundation), 1× A100 40GB (adapters) |
+| Inference hardware | 1× A100 40GB (full model fits, no quantization needed for inference) |
 | Compliance | HIPAA-ready, AES-256-GCM encryption, full audit logging |
 
-## Budget Summary
+## Budget Summary (MVP — Mistral 7B)
 
 | Phase | Cost | Duration |
 |-------|------|----------|
-| Data collection & processing | $0 (open datasets) | Week 1 |
-| Foundation training (Mixtral 8x7B) | ~$1,500 | Week 1-2 |
-| DPO safety alignment | ~$200 | Week 2 |
-| Adapter training (6 adapters) | ~$2,000 | Week 2-3 |
-| Evaluation & iteration | ~$300 | Week 3 |
-| Inference hosting (monthly) | ~$1,000/mo | Ongoing |
-| **Total MVP** | **~$5,000** | **3 weeks** |
+| Data collection & processing | $0 (open datasets) | Day 1 |
+| Foundation training (Mistral 7B, 500K examples) | ~$4 | Day 1–2 |
+| Foundation training (Mistral 7B, full 4M examples) | ~$24 | Day 2–3 |
+| ORPO safety alignment | ~$1 | Day 3 |
+| Adapter training (6 adapters, QLoRA) | ~$4 | Day 3–4 |
+| Evaluation & iteration | ~$5 | Day 4–5 |
+| Inference hosting (monthly) | ~$500–800/mo | Ongoing |
+| **Total MVP** | **~$35–50** | **~1 week** |
 
 ## Competitive Advantages
 

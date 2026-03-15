@@ -1,135 +1,121 @@
-# IMI - Intelligent Medical Interface
+# IMI — Intelligent Medical Interface
 
-A production-grade medical LLM platform with hybrid cognition architecture serving patients, students, doctors, researchers, and pharmaceutical companies.
+A production-grade medical AI platform built on a **5-Layer Hybrid Cognition Architecture**, fine-tuned on Mistral 7B with 6 domain-specific LoRA adapters, serving patients, students, doctors, researchers, hospitals, and pharmaceutical companies.
 
-## Architecture Overview
+## Model
 
-### 5-Layer Hybrid Cognition Stack
+| | |
+|---|---|
+| **Base model** | `mistralai/Mistral-7B-Instruct-v0.3` (Apache 2.0) |
+| **Architecture** | Dense transformer, 7B parameters, 32K context |
+| **Training pipeline** | Foundation full FT → ORPO safety alignment → 6 LoRA adapters |
+| **Quantization** | QLoRA 4-bit NF4 (inference) / BF16 full (foundation training) |
+| **LoRA targets** | q,k,v,o_proj + gate_proj, up_proj, down_proj |
+| **Inference** | vLLM with LoRA hot-swapping, <200ms p95 latency |
 
-1. **Layer 1 - Knowledge Graph (Truth Layer)**
-   - Disease ↔ Symptom ↔ Drug ↔ Interaction ↔ Guideline relationships
-   - Neo4j graph database for medical knowledge
-   - Sources: Clinical guidelines, drug labels, regulatory texts
-
-2. **Layer 2 - Rule Engine (Safety Layer)**
-   - Deterministic logic for OTC eligibility, red-flag symptoms, contraindications
-   - ASMETHOD-style triage logic
-   - If-then medical reasoning
-
-3. **Layer 3 - LLM (Language + Synthesis)**
-   - Meditron-7B medical language model (4-bit QLoRA)
-   - 6 domain-specific LoRA adapters (r=16, alpha=32)
-   - Parallel multi-GPU training support
-   - Never decides alone - always verified
-
-4. **Layer 4 - Verifier/Critic Model**
-   - Hallucination detection
-   - Guideline conflict checking
-   - Overconfidence detection
-
-5. **Layer 5 - Memory & Profiling**
-   - Longitudinal patient/pharma profiles
-   - Time-aware medical history
-   - Outcome feedback loops
-
-## User Types
-
-- **General User**: Medical information queries
-- **Patient**: Diagnosis support, OTC recommendations, referrals
-- **Student**: USMLE prep, medical education
-- **Researcher**: Drug research, patent process support
-- **Pharmaceutical**: QA/QC, regulatory compliance, sales tracking
-- **Hospital**: ER optimization, patient profiling
-- **Doctor**: Diagnosis assistance, case research
-
-## HIPAA Compliance
-
-- End-to-end encryption (AES-256)
-- Role-based access control (RBAC)
-- Complete audit logging
-- Data anonymization
-- Secure key management
-
-## Project Structure
+## Architecture — 5-Layer Hybrid Cognition Stack
 
 ```
-imi/
-├── src/
-│   ├── core/                     # Core infrastructure
-│   │   ├── config/               # Configuration management (settings.py)
-│   │   ├── security/             # HIPAA compliance
-│   │   │   ├── encryption.py     # AES-256-GCM encryption
-│   │   │   ├── authentication.py # JWT authentication
-│   │   │   ├── authorization.py  # RBAC permissions
-│   │   │   ├── audit.py          # Audit logging
-│   │   │   └── hipaa.py          # PHI handling
-│   │   └── database/             # Database connections
-│   │       ├── postgres.py       # PostgreSQL async client
-│   │       ├── neo4j_client.py   # Neo4j graph client
-│   │       └── redis_client.py   # Redis cache client
-│   ├── layers/                   # 5-Layer Architecture
-│   │   ├── knowledge_graph/      # Layer 1: Truth Layer
-│   │   │   ├── schema.py         # Medical entity models
-│   │   │   ├── queries.py        # Cypher query builder
-│   │   │   └── service.py        # KG service interface
-│   │   ├── rule_engine/          # Layer 2: Safety Layer
-│   │   │   ├── triage.py         # ASMETHOD triage
-│   │   │   ├── otc_eligibility.py# OTC assessment
-│   │   │   ├── contraindication_checker.py
-│   │   │   ├── red_flags.py      # Critical symptom detection
-│   │   │   └── service.py        # Rule engine orchestrator
-│   │   ├── llm/                  # Layer 3: Language Layer
-│   │   │   ├── meditron.py       # Meditron model wrapper
-│   │   │   ├── prompts.py        # Role-specific prompts
-│   │   │   ├── adapters.py       # LoRA domain adapters
-│   │   │   └── service.py        # LLM service
-│   │   ├── verifier/             # Layer 4: Critic Layer
-│   │   │   ├── hallucination_detector.py
-│   │   │   ├── guideline_checker.py
-│   │   │   ├── confidence_calibrator.py
-│   │   │   └── service.py        # Verifier orchestrator
-│   │   └── memory/               # Layer 5: Profiling Layer
-│   │       ├── patient_profile.py# HIPAA-compliant profiles
-│   │       ├── entity_profile.py # Pharma/hospital profiles
-│   │       ├── conversation_memory.py
-│   │       └── service.py        # Memory service
-│   ├── domains/                  # Domain-specific services
-│   │   ├── patient.py            # Patient triage, diagnosis
-│   │   ├── student.py            # USMLE, education
-│   │   ├── doctor.py             # Clinical decision support
-│   │   ├── researcher.py         # Research, patents
-│   │   ├── pharma.py             # QA/QC, regulatory
-│   │   ├── hospital.py           # ER, insurance
-│   │   └── general.py            # General medical info
-│   ├── api/                      # FastAPI REST API
-│   │   ├── main.py               # Application entry
-│   │   └── routes/               # API endpoints
-│   ├── orchestrator.py           # Linear orchestrator
-│   └── orchestrator_langgraph.py # Graph-based orchestrator (NEW)
-├── scripts/
-│   ├── data_collection/          # Dataset collection, PDF ingestion
-│   └── training/                 # LoRA training pipeline
-├── adapters/                     # Trained LoRA adapters
-├── data/                         # Training data, vector store
-├── apps/                         # Standalone applications
-├── docs/                         # Documentation
-├── requirements.txt              # Python dependencies
-└── .env.example                  # Environment template
+User Request
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 0: INPUT GUARDRAILS               │  < 5ms regex — crisis/emergency/scope
+│  (before anything else runs)             │  CRISIS → bypass LLM entirely
+└──────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 1: KNOWLEDGE GRAPH  (Truth)       │  Neo4j: disease↔symptom↔drug↔guideline
+└──────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 2: RULE ENGINE  (Safety)          │  Deterministic triage, OTC, contraindications
+└──────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 3: LLM  (Language + Synthesis)    │  Mistral 7B + domain LoRA adapter
+│  — never decides alone on safety —       │
+└──────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 4: VERIFIER  (Critic)             │  Hallucination detection, guideline check
+└──────────────────────────────────────────┘
+     │
+     ▼
+┌──────────────────────────────────────────┐
+│  Layer 5: MEMORY  (Profiling)            │  HIPAA-compliant patient/entity profiles
+└──────────────────────────────────────────┘
+     │
+     ▼
+Verified Response
 ```
 
-### New in v2.0
+## LoRA Adapters (6 domains)
+
+| Adapter | User Type | Training Data |
+|---------|-----------|---------------|
+| `patient_triage` | Patient | symptom datasets, triage cases, health advice |
+| `clinical_decision` | Doctor | doctor-patient dialogues, clinical notes, SOAP summaries |
+| `education` | Student | USMLE, MedMCQA, flashcards, reasoning chains |
+| `research` | Researcher | PubMedQA, biomedical literature, clinical trials |
+| `clinical_pharmacist` | Pharma/Pharmacist | drug reviews, interactions, pharmacogenomics |
+| `regulatory_qa` | Hospital/Regulatory | guidelines, ICD-10, WHO protocols |
+
+## Training Pipeline
 
 ```
-src/layers/
-├── rag/                          # RAG Pipeline (NEW)
-│   ├── pipeline.py               # Document ingestion & retrieval
-│   ├── embeddings.py             # Embedding service
-│   └── vector_store.py           # ChromaDB/FAISS storage
-├── explainability/               # SHAP Explainability (NEW)
-│   └── shap_explainer.py         # Token importance, counterfactuals
-└── citation/                     # Citation Tracking (NEW)
-    └── tracker.py                # Inline citations, references
+Step 1 — Data Collection
+  python scripts/data_collection/collect_hf_datasets.py   # 8M+ examples, no creds needed
+  python scripts/data_collection/collect_datasets.py       # 40+ additional HF datasets
+  python scripts/data_collection/collect_biomedical_corpus.py  # PubMed, PMC, CORD-19
+  python scripts/data_collection/synthetic_generator.py    # synthetic cases (unlimited)
+
+Step 2 — Foundation Training  (full fine-tuning, all 7B params)
+  python scripts/training/train_foundation.py
+  # Hardware: 1× A100 80GB + DeepSpeed CPU offload  OR  4× A100 for speed
+  # Cost: ~$3–15 depending on dataset size
+
+Step 3 — ORPO Safety Alignment  (replaces DPO — no reference model needed)
+  python scripts/training/train_dpo.py train --foundation-path models/foundation
+  # Hardware: 1× A100 40GB
+  # Cost: ~$1
+
+Step 4 — Domain Adapter Training  (QLoRA, 6 adapters)
+  python scripts/training/finetune_mixtral.py --gpu-tier A100_40GB --data-format both
+  # Hardware: 1× A100 40GB per adapter (run in parallel)
+  # Cost: ~$4 total for all 6
+
+Step 5 — Evaluate
+  python scripts/training/evaluate_adapter.py --adapter models/mistral-medical-qlora
+
+Step 6 — Checkpoint Averaging (optional, improves stability)
+  python scripts/training/average_checkpoints.py --checkpoint-dir models/mistral-medical-qlora
 ```
+
+## Dataset Summary
+
+| Source | Examples | Notes |
+|--------|----------|-------|
+| HuggingFace Hub (100+ datasets) | ~8.2M raw | `collect_hf_datasets.py` |
+| Direct URL (GitHub, CDC, CMS) | ~1.9M raw | included above |
+| Additional HF catalogue | ~80K | `collect_datasets.py` |
+| Biomedical corpus (free tier) | millions more | NCBI API key needed |
+| Synthetic generator | unlimited | template-based |
+| **Clean usable (deduplicated)** | **~4–5M** | **~2B tokens** |
+
+## Training Cost (Mistral 7B on your 8× A100 80GB)
+
+| Phase | Hardware | Time | Cost |
+|-------|----------|------|------|
+| Foundation (500K examples, 3 epochs) | 1× A100 80GB | ~2 hrs | ~$4 |
+| Foundation (4M examples, 3 epochs) | 8× A100 80GB | ~1.5 hrs | ~$24 |
+| ORPO safety alignment | 1× A100 40GB | ~30 min | ~$1 |
+| 6 LoRA adapters (QLoRA) | 1× A100 40GB each | ~2 hrs total | ~$4 |
+| **Full MVP pipeline** | | | **~$30–50** |
 
 ## Quick Start
 
@@ -147,110 +133,132 @@ alembic upgrade head
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 ```
 
+## Project Structure
+
+```
+IMI/
+├── src/
+│   ├── core/
+│   │   ├── config/settings.py          # App config (model path, DB, etc.)
+│   │   ├── security/                   # HIPAA: AES-256, JWT, RBAC, audit
+│   │   └── database/                   # PostgreSQL, Neo4j, Redis clients
+│   ├── layers/
+│   │   ├── knowledge_graph/            # Layer 1 — Neo4j medical facts
+│   │   ├── rule_engine/                # Layer 2 — Deterministic safety
+│   │   │   └── guardrails.py           # Input/Output pattern guardrails
+│   │   ├── llm/
+│   │   │   ├── meditron.py             # MistralMedicalModel (was Mixtral)
+│   │   │   ├── prompts.py              # Role-specific system prompts
+│   │   │   ├── adapters.py             # LoRA domain adapter management
+│   │   │   └── service.py              # LLM orchestration service
+│   │   ├── verifier/                   # Layer 4 — Hallucination & guideline check
+│   │   ├── memory/                     # Layer 5 — HIPAA patient profiles
+│   │   ├── rag/                        # RAG pipeline (ChromaDB/FAISS)
+│   │   ├── explainability/             # SHAP token importance
+│   │   └── citation/                   # Inline citation tracking
+│   ├── domains/                        # Per-user-type business logic
+│   ├── api/routes/                     # FastAPI endpoints
+│   ├── orchestrator.py                 # Linear 5-layer orchestrator
+│   └── orchestrator_langgraph.py       # Graph-based orchestrator (LangGraph)
+├── scripts/
+│   ├── data_collection/
+│   │   ├── collect_hf_datasets.py      # 100+ HF datasets, ~8M examples
+│   │   ├── collect_datasets.py         # 40+ additional datasets
+│   │   ├── collect_biomedical_corpus.py# PubMed, PMC, CORD-19, MIMIC
+│   │   ├── synthetic_generator.py      # Synthetic medical cases
+│   │   └── ingest_pdfs.py              # WHO/FDA PDF ingestion
+│   └── training/
+│       ├── train_foundation.py         # Step 2: full FT, all 7B params
+│       ├── train_dpo.py                # Step 3: ORPO safety alignment
+│       ├── finetune_mixtral.py         # Step 4: QLoRA domain adapters
+│       ├── prepare_medical_data.py     # Data preparation
+│       ├── evaluate_adapter.py         # Evaluation (9 metrics)
+│       └── average_checkpoints.py      # Checkpoint averaging
+├── configs/
+│   └── deepspeed_zero3.json            # ZeRO-3 + CPU optimizer offload
+├── docs/                               # Full documentation
+├── requirements.txt
+├── requirements-training.txt
+└── .env.example
+```
+
 ## API Endpoints
 
-### Patient API (`/api/v1/patient`)
-- `POST /assess-symptoms` - Symptom assessment and triage
-- `POST /health-info` - Health information queries
-- `POST /check-drug-safety` - Drug safety verification
-- `POST /analyze-lab-results` - Lab result interpretation
+### Patient `/api/v1/patient`
+- `POST /assess-symptoms` — Symptom triage
+- `POST /health-info` — Health information
+- `POST /check-drug-safety` — Drug safety
+- `POST /analyze-lab-results` — Lab interpretation
 
-### Doctor API (`/api/v1/doctor`)
-- `POST /differential` - Generate differential diagnosis
-- `POST /treatment-recommendations` - Evidence-based treatments
-- `POST /drug-interactions` - Drug interaction checking
-- `GET /guidelines/{condition}` - Clinical guidelines
-- `POST /summarize-case` - Case summarization
+### Doctor `/api/v1/doctor`
+- `POST /differential` — Differential diagnosis
+- `POST /treatment-recommendations` — Evidence-based treatment
+- `POST /drug-interactions` — Drug interaction check
+- `GET /guidelines/{condition}` — Clinical guidelines
+- `POST /summarize-case` — Case summary
 
-### Student API (`/api/v1/student`)
-- `POST /answer-question` - USMLE question answering
-- `POST /explain-concept` - Medical concept explanation
-- `POST /generate-practice` - Practice question generation
-- `POST /review-essay` - Medical writing review
+### Student `/api/v1/student`
+- `POST /answer-question` — USMLE Q&A
+- `POST /explain-concept` — Medical concept explanation
+- `POST /generate-practice` — Practice question generation
 
-### Researcher API (`/api/v1/researcher`)
-- `POST /literature/search` - Literature search
-- `POST /literature/synthesize` - Literature synthesis
-- `POST /patent/guidance` - Patent application guidance
-- `POST /regulatory-pathway` - Regulatory pathway guidance
+### Researcher `/api/v1/researcher`
+- `POST /literature/search` — Literature search
+- `POST /literature/synthesize` — Literature synthesis
+- `POST /patent/guidance` — Patent guidance
+- `POST /regulatory-pathway` — Regulatory pathway
 
-### Pharmaceutical API (`/api/v1/pharma`)
-- `POST /document/generate` - QA document generation
-- `POST /compliance/check` - Regulatory compliance check
-- `POST /validation` - Validation record management
-- `GET /sales/analytics/{entity_id}` - Sales analytics
+### Pharmaceutical `/api/v1/pharma`
+- `POST /document/generate` — QA document generation
+- `POST /compliance/check` — Regulatory compliance
+- `GET /sales/analytics/{entity_id}` — Sales analytics
 
-### Hospital API (`/api/v1/hospital`)
-- `POST /er/triage` - ER patient triage
-- `GET /er/queue` - ER queue management
-- `POST /appointment` - Appointment scheduling
-- `POST /insurance/claim` - Insurance claim processing
+### Hospital `/api/v1/hospital`
+- `POST /er/triage` — ER triage
+- `GET /er/queue` — Queue management
+- `POST /insurance/claim` — Insurance processing
 
-### General API (`/api/v1/general`)
-- `GET /disease/{name}` - Disease information
-- `GET /drug/{name}` - Drug information
-- `POST /search` - Medical search
-- `POST /drug-interaction` - Drug interaction check
+### General `/api/v1/general`
+- `GET /disease/{name}` — Disease information
+- `GET /drug/{name}` — Drug information
+- `POST /search` — Medical search
 
-## Environment Variables
+## Safety Architecture
 
-See `.env.example` for required configuration.
+- **Guardrails first** — crisis/emergency patterns caught in < 5ms before any LLM call
+- **CRISIS** → LLM completely bypassed, hardcoded crisis resources shown
+- **EMERGENCY** → emergency banner prepended, LLM generates with urgency context
+- **Rule Engine** → deterministic triage/contraindication/OTC logic (not LLM guesswork)
+- **ORPO alignment** — model trained to prefer safe, hedged responses
+- **Verifier** — hallucination detection, guideline compliance, confidence calibration
+- **Output Guardrails** — softens overconfident language, scrubs PHI
 
-## Key Features
+## HIPAA Compliance
 
-### Safety-First Architecture
-- **LLM never decides alone** on safety-critical matters
-- All recommendations pass through deterministic rule engine
-- Verifier checks for hallucinations and guideline conflicts
-- Red flag detection for emergency symptoms
-
-### HIPAA Compliance
-- AES-256-GCM encryption for PHI at rest
+- AES-256-GCM encryption for all PHI at rest
 - JWT-based authentication with role verification
-- Complete audit trail of all PHI access
-- Data anonymization for research use
-
-### Domain Adapters (LoRA)
-- Patient Triage adapter
-- Clinical Pharmacist adapter
-- Regulatory QA adapter
-- Research adapter
-- Education adapter
-
-## Training Your Own Adapters
-
-See `docs/TRAINING_GUIDE.md` for complete instructions.
-
-```bash
-# Quick start
-python scripts/data_collection/collect_datasets.py      # Download open datasets
-python scripts/data_collection/synthetic_generator.py   # Generate synthetic data
-python scripts/data_collection/ingest_pdfs.py           # Ingest WHO/FDA PDFs
-python scripts/training/prepare_data.py                 # Prepare for training
-python scripts/training/train_lora.py --adapter all --parallel  # Train adapters (multi-GPU)
-```
+- Complete audit trail (every query, response, safety event)
+- PHI anonymization for research use
+- Data retention policies (7-year audit log default)
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| `docs/ARCHITECTURE.md` | Complete system architecture |
-| `docs/TRAINING_GUIDE.md` | Training pipeline guide |
+| Doc | Description |
+|-----|-------------|
+| `docs/ARCHITECTURE.md` | Full 5-layer system architecture |
+| `docs/TRAINING_GUIDE.md` | Complete training pipeline guide |
+| `docs/TRAINING_QUICKSTART.md` | Quick-start training reference |
+| `docs/TRAINING_ARCHITECTURE.md` | Training system design |
+| `docs/FINETUNING_GUIDE.md` | Fine-tuning deep dive |
 | `docs/API_REFERENCE.md` | API endpoint documentation |
 | `docs/DEPLOYMENT.md` | Deployment instructions |
-| `docs/RUNPOD_DEPLOYMENT_GUIDE.md` | RunPod cloud training guide |
-| `docs/FEATURES_AND_ROADMAP.md` | Features list and roadmap |
+| `docs/RUNPOD_DEPLOYMENT_GUIDE.md` | RunPod cloud training |
+| `docs/INVESTOR_DEMO.md` | Investor demo script |
 | `docs/PITCH_DECK.md` | Investor pitch deck |
 | `docs/REASONING_AND_GOVERNANCE.md` | Decision making and auditing |
-
-## v2.0 Features
-
-- **LangGraph Orchestrator**: Graph-based flow with branching, retry loops, checkpointing
-- **RAG Pipeline**: Document ingestion, semantic search, context retrieval
-- **SHAP Explainability**: Token importance, feature attribution, counterfactuals
-- **Citation Tracking**: Inline citations `[1]`, reference lists, credibility scoring
-- **22 Medical Datasets**: 3M+ training examples from open sources
+| `docs/FEATURES_AND_ROADMAP.md` | Roadmap |
+| `docs/RECOMMENDATIONS.md` | Implementation recommendations |
 
 ## License
 
-Proprietary - All rights reserved.
+Proprietary — All rights reserved.

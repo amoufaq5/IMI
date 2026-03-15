@@ -1,6 +1,6 @@
 # IMI Training Guide
 
-Complete guide for training the IMI Medical LLM on Mixtral 8x7B.
+Complete guide for training the IMI Medical LLM on Mistral 7B (MVP/POC).
 
 ---
 
@@ -10,8 +10,8 @@ Two training paths depending on your goal:
 
 | Path | When to use | GPU | Cost estimate |
 |------|-------------|-----|---------------|
-| **Adapter only** (QLoRA) | MVP, proof of concept, fast iteration | 1× A100 80GB | ~$20–80 |
-| **Foundation → Adapter** | Production quality, deep domain shift | 8× A100 80GB + 1× A100 80GB | ~$300–600 |
+| **Adapter only** (QLoRA) | MVP, proof of concept, fast iteration | 1× A100 40GB | ~$4–8 |
+| **Foundation → Adapter** | Production quality, deep domain shift | 1× A100 80GB + 1× A100 40GB | ~$30–50 |
 
 Both paths use the same data collection and preparation steps.
 
@@ -43,14 +43,14 @@ Both paths use the same data collection and preparation steps.
 │  ADAPTER ONLY      │   │                                │
 │                    │   │  3. FOUNDATION TRAINING        │
 │  finetune_         │   │     train_foundation.py        │
-│  mixtral.py        │   │     8× A100 80GB               │
-│  1× A100 80GB      │   │     torchrun --nproc_per_node=8│
+│  mixtral.py        │   │     1× A100 80GB               │
+│  1× A100 40GB      │   │     + DeepSpeed CPU offload    │
 │                    │   │            │                   │
 │                    │   │            ▼                   │
 │                    │   │  4. ADAPTER TRAINING           │
 │                    │   │     finetune_mixtral.py        │
 │                    │   │     --base-model models/found. │
-│                    │   │     1× A100 80GB               │
+│                    │   │     1× A100 40GB               │
 └────────────────────┘   └────────────────────────────────┘
              │                       │
              └───────────┬───────────┘
@@ -90,12 +90,12 @@ cd /workspace/IMI
 
 ### 1.2 Install dependencies
 
-**For adapter training only (single A100 80GB):**
+**For adapter training only (single A100 40GB+):**
 ```bash
 bash scripts/install_training.sh
 ```
 
-**For foundation training (8× A100 80GB):**
+**For foundation training (1× A100 80GB with DeepSpeed CPU offload, or multi-GPU):**
 ```bash
 bash scripts/install_training.sh --foundation
 ```
@@ -106,7 +106,7 @@ The script installs packages in the correct order. Do **not** run
 Verify the install:
 ```bash
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
-# Expected: True  8    (or True  1 for single GPU)
+# Expected: True  1    (single GPU)  or  True  8    (multi-GPU cluster)
 ```
 
 ---
@@ -156,7 +156,7 @@ python scripts/training/prepare_medical_data.py --data-dir /workspace/data
 
 ---
 
-## Step 4A: Adapter Training Only (Path A — single A100 80GB)
+## Step 4A: Adapter Training Only (Path A — single A100 40GB+)
 
 Skip this if doing Path B (foundation → adapter).
 
@@ -166,7 +166,7 @@ Skip this if doing Path B (foundation → adapter).
 python scripts/training/finetune_mixtral.py --demo
 ```
 
-This runs 10 steps on 100 examples. Takes ~5 minutes. Confirms:
+This runs 10 steps on 100 examples. Takes ~2 minutes on Mistral 7B. Confirms:
 - Model loads correctly
 - Data files are found
 - GPU has enough memory
@@ -175,62 +175,68 @@ This runs 10 steps on 100 examples. Takes ~5 minutes. Confirms:
 ### Full adapter training
 
 ```bash
-# Recommended: A100 80GB
-python scripts/training/finetune_mixtral.py --gpu-tier A100_80GB
-
-# If you have A100 40GB
+# Recommended: A100 40GB (Mistral 7B fits comfortably)
 python scripts/training/finetune_mixtral.py --gpu-tier A100_40GB
+
+# Budget option: RTX 3090 (24GB)
+python scripts/training/finetune_mixtral.py --gpu-tier RTX3090
+
+# High throughput: A100 80GB
+python scripts/training/finetune_mixtral.py --gpu-tier A100_80GB
 
 # Train on specific data format only
 python scripts/training/finetune_mixtral.py \
-    --gpu-tier A100_80GB \
+    --gpu-tier A100_40GB \
     --data-format instruction    # or "general_knowledge" or "both" (default)
 
 # Resume from checkpoint
 python scripts/training/finetune_mixtral.py \
-    --gpu-tier A100_80GB \
-    --resume-from models/mixtral-medical-qlora/checkpoint-500
+    --gpu-tier A100_40GB \
+    --resume-from models/mistral-medical-qlora/checkpoint-500
 
 # With experiment tracking
 python scripts/training/finetune_mixtral.py \
-    --gpu-tier A100_80GB \
+    --gpu-tier A100_40GB \
     --report-to wandb
 ```
 
-**GPU tier settings:**
+**GPU tier settings (Mistral 7B QLoRA):**
 
-| Tier | Batch | Seq len | Grad accum | LoRA r | Effective batch |
-|------|-------|---------|------------|--------|-----------------|
-| `A100_40GB` | 1 | 1024 | 16 | 16 | 16 |
-| `A100_80GB` | 4 | 2048 | 4 | 32 | 16 |
-| `H100_80GB` | 8 | 2048 | 2 | 64 | 16 |
+| Tier | Batch | Seq len | Grad accum | LoRA r | VRAM used |
+|------|-------|---------|------------|--------|-----------|
+| `RTX3090` | 2 | 1024 | 8 | 16 | ~18 GB |
+| `A100_40GB` | 4 | 2048 | 4 | 32 | ~28 GB ✓ |
+| `A100_80GB` | 8 | 4096 | 2 | 64 | ~45 GB ✓ |
+| `H100_80GB` | 16 | 4096 | 1 | 64 | ~55 GB ✓ |
 
-Output saved to `models/mixtral-medical-qlora/`.
+Output saved to `models/mistral-medical-qlora/`.
 
 ---
 
-## Step 4B: Foundation Training (Path B — 8× A100 80GB)
+## Step 4B: Foundation Training (Path B — 1× A100 80GB)
 
-This trains all 46.7B parameters — no LoRA, no quantization.
-Requires `--foundation` flag in install step and DeepSpeed ZeRO Stage 3.
+This trains all **7B parameters** — no LoRA, no quantization.
+Uses DeepSpeed ZeRO-3 with CPU optimizer offload so a single A100 80GB is sufficient.
 
-### Memory layout with ZeRO-3 across 8× A100 80GB
+### Memory layout (1× A100 80GB + CPU offload)
 
 ```
-Per GPU (80 GB budget):
-  Model shard (ZeRO-3):     46.7B × 2B / 8 GPUs  ≈ 11.7 GB
-  Gradient shard:                                  ≈ 11.7 GB
-  Optimizer shard (Adam):                          ≈ 23.4 GB
-  Activations (batch=4, grad_ckpt):               ≈ 15–20 GB
-  NCCL buffers:                                    ≈  5 GB
-  Total:                                           ≈ 67–72 GB  ✓
+GPU budget (80 GB):
+  Model weights (BF16):     7B × 2 bytes           ≈ 14 GB
+  Gradients (BF16):                                 ≈ 14 GB
+  Optimizer (CPU offloaded via DeepSpeed):          ≈  0 GB GPU
+  Activations (batch=4, seq=2048, grad_ckpt):      ≈ 10 GB
+  Total GPU:                                        ≈ 38 GB  ✓ (42 GB headroom)
+
+CPU RAM needed for optimizer offload:
+  AdamW 32-bit (2 states × 7B params × 4B):        ≈ 56 GB RAM
+  → Recommend 64 GB+ system RAM on your pod
 ```
 
-### Run foundation training
+### Run foundation training (single GPU)
 
 ```bash
-torchrun --nproc_per_node=8 \
-    scripts/training/train_foundation.py \
+python scripts/training/train_foundation.py \
     --deepspeed configs/deepspeed_zero3.json
 ```
 
@@ -414,7 +420,7 @@ IMI/
 │   │   ├── model.safetensors.*
 │   │   ├── tokenizer.json
 │   │   └── foundation_metadata.json
-│   └── mixtral-medical-qlora/     # QLoRA adapter (Path A or B step 2)
+│   └── mistral-medical-qlora/     # QLoRA adapter (Path A or B step 2)
 │       ├── adapter_config.json
 │       ├── adapter_model.safetensors
 │       └── training_metadata.json
@@ -427,7 +433,7 @@ IMI/
     │   └── synthetic_generator.py
     └── training/
         ├── prepare_medical_data.py   # produces 2-format data
-        ├── train_foundation.py       # full fine-tuning, 8× A100
+        ├── train_foundation.py       # full fine-tuning, 1× A100 80GB
         ├── finetune_mixtral.py       # QLoRA adapter, 1× A100
         └── evaluate_adapter.py
 ```
