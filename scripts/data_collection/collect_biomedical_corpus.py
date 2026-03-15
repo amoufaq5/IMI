@@ -169,9 +169,18 @@ class NCBIClient:
         params.update({"tool": self.tool, "email": self.email})
         if self.api_key:
             params["api_key"] = self.api_key
-        r = self.session.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        return r.text
+        for attempt in range(4):
+            try:
+                r = self.session.get(url, params=params, timeout=60)
+                r.raise_for_status()
+                return r.text
+            except (requests.exceptions.ChunkedEncodingError,
+                    requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    raise
+                wait = 2 ** (attempt + 1)
+                logger.warning(f"  efetch network error ({exc}), retrying in {wait}s…")
+                time.sleep(wait)
 
     def search(self, db: str, query: str, retmax: int = 10_000) -> List[str]:
         """Run ESearch and return ALL matching IDs via paginated WebEnv history.
@@ -298,7 +307,7 @@ def collect_pubmed(ncbi: NCBIClient, queries: List[Tuple[str, str, str]],
                        articles are retrieved with no total cap.
     """
     records = []
-    batch_size = 200  # PMIDs per efetch call
+    batch_size = 100  # PMIDs per efetch call (smaller = fewer truncated responses)
 
     for query_str, adapter, topic in queries:
         logger.info(f"  PubMed: {topic} ({max_per_query:,} max)")
