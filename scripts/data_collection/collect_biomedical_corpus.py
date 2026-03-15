@@ -53,6 +53,7 @@ import random
 import zipfile
 import gzip
 import csv
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator, Tuple
@@ -127,6 +128,40 @@ def load_existing_ids(path: Path) -> set:
 
 
 # =============================================================================
+# ROBUST HTTP HELPERS
+# =============================================================================
+
+_RETRY_EXCEPTIONS = (
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ReadTimeout,
+)
+
+
+def _robust_get(session: requests.Session, url: str, params: dict = None,
+                timeout: int = 90, retries: int = 4, backoff: float = 2.0,
+                stream: bool = False) -> requests.Response:
+    """GET with exponential-backoff retries on transient network errors."""
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            r = session.get(url, params=params, timeout=timeout, stream=stream)
+            r.raise_for_status()
+            if not stream:
+                # Force reading the body now so ChunkedEncodingError surfaces here
+                _ = r.content
+            return r
+        except _RETRY_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                wait = backoff ** (attempt + 1)
+                logger.warning(f"  Network error ({type(exc).__name__}), retry {attempt+1}/{retries-1} in {wait:.0f}s…")
+                time.sleep(wait)
+    raise last_exc
+
+
+# =============================================================================
 # NCBI E-UTILITIES CLIENT
 # =============================================================================
 
@@ -156,10 +191,8 @@ class NCBIClient:
     def _get(self, endpoint: str, params: dict) -> dict:
         url = self.BASE + endpoint
         time.sleep(self._delay)
-        r = self.session.get(url, params=params, timeout=30)
-        r.raise_for_status()
+        r = _robust_get(self.session, url, params=params, timeout=60)
         # NCBI occasionally returns JSON with unescaped control characters
-        # (e.g. in article titles/abstracts). strict=False tolerates them.
         return json.loads(r.text, strict=False)
 
     def _get_xml(self, endpoint: str, params: dict) -> str:
@@ -169,43 +202,32 @@ class NCBIClient:
         params.update({"tool": self.tool, "email": self.email})
         if self.api_key:
             params["api_key"] = self.api_key
-        for attempt in range(4):
-            try:
-                r = self.session.get(url, params=params, timeout=60)
-                r.raise_for_status()
-                return r.text
-            except (requests.exceptions.ChunkedEncodingError,
-                    requests.exceptions.ConnectionError) as exc:
-                if attempt == 3:
-                    raise
-                wait = 2 ** (attempt + 1)
-                logger.warning(f"  efetch network error ({exc}), retrying in {wait}s…")
-                time.sleep(wait)
+        r = _robust_get(self.session, url, params=params, timeout=120)
+        return r.text
 
     def search(self, db: str, query: str, retmax: int = 10_000) -> List[str]:
-        """Run ESearch and return ALL matching IDs via paginated WebEnv history.
+        """Run ESearch and return IDs via paginated WebEnv history.
 
         NCBI caps a single retmax at 10 000; this method pages through the
-        entire result set in 10 000-ID batches so there is no total limit.
+        entire result set in 10 000-ID batches up to retmax.
         """
-        # First call: get total count + history-server keys (return 0 IDs).
         result = self._get("esearch.fcgi", self._params(
             db=db, term=query, retmax=0, usehistory="y",
         ))
         esearch = result.get("esearchresult", {})
-        total = int(esearch.get("count", 0))
+        total = min(int(esearch.get("count", 0)), retmax)
         web_env = esearch.get("webenv", "")
         query_key = esearch.get("querykey", "")
 
         if total == 0:
             return []
 
-        # Paginate through every result using the history server.
         page = 10_000  # NCBI hard cap per request
         all_ids: List[str] = []
         for retstart in range(0, total, page):
             r = self._get("esearch.fcgi", self._params(
-                db=db, term=query, retmax=page, retstart=retstart,
+                db=db, term=query, retmax=min(page, total - retstart),
+                retstart=retstart,
                 usehistory="y", WebEnv=web_env, query_key=query_key,
             ))
             batch = r.get("esearchresult", {}).get("idlist", [])
@@ -213,7 +235,7 @@ class NCBIClient:
             if not batch:
                 break
 
-        return all_ids
+        return all_ids[:retmax]
 
     def fetch_pubmed_abstracts(self, pmids: List[str]) -> List[Dict[str, Any]]:
         """Fetch PubMed abstracts for a list of PMIDs."""
@@ -297,26 +319,26 @@ class NCBIClient:
 
 def collect_pubmed(ncbi: NCBIClient, queries: List[Tuple[str, str, str]],
                    max_per_query: int = 10_000) -> List[Dict[str, Any]]:
-    """
-    Collect PubMed abstracts across clinical domains.
-
-    Args:
-        queries: List of (query_string, adapter_type, topic_label)
-        max_per_query: Per-page fetch size passed to search() (NCBI max = 10 000).
-                       search() now paginates automatically so all matching
-                       articles are retrieved with no total cap.
-    """
+    """Collect PubMed abstracts across clinical domains."""
     records = []
-    batch_size = 100  # PMIDs per efetch call (smaller = fewer truncated responses)
+    batch_size = 50  # Small batches to avoid NCBI truncating responses
 
     for query_str, adapter, topic in queries:
         logger.info(f"  PubMed: {topic} ({max_per_query:,} max)")
-        pmids = ncbi.search("pubmed", query_str, retmax=max_per_query)
+        try:
+            pmids = ncbi.search("pubmed", query_str, retmax=max_per_query)
+        except Exception as e:
+            logger.warning(f"    Search failed for {topic}: {e}")
+            continue
         logger.info(f"    Found {len(pmids)} articles")
 
         for i in range(0, len(pmids), batch_size):
             batch = pmids[i:i + batch_size]
-            abstracts = ncbi.fetch_pubmed_abstracts(batch)
+            try:
+                abstracts = ncbi.fetch_pubmed_abstracts(batch)
+            except Exception as e:
+                logger.warning(f"    Batch {i//batch_size} failed ({e}), skipping")
+                continue
             for a in abstracts:
                 text = f"Title: {a['title']}\n\nAbstract: {a['abstract']}"
                 if a["mesh_terms"]:
@@ -378,13 +400,26 @@ def collect_pmc(ncbi: NCBIClient, max_articles: int = 10_000) -> List[Dict[str, 
          "clinical_decision", "case_reports"),
     ]
     per_query = max_articles // len(pmc_queries)
+    batch_size = 25  # PMC full-text is large; fetch in small batches
+
     for query_str, adapter, topic in pmc_queries:
         logger.info(f"  PMC: {topic}")
-        pmcids = ncbi.search("pmc", query_str, retmax=per_query)
-        articles = ncbi.fetch_pmc_full_text(pmcids[:200])  # batch for safety
-        for a in articles:
-            text = f"Title: {a['title']}\n\n{a['body']}"
-            records.append(make_general(text, f"pmc_{topic}", adapter))
+        try:
+            pmcids = ncbi.search("pmc", query_str, retmax=per_query)
+        except Exception as e:
+            logger.warning(f"    PMC search failed for {topic}: {e}")
+            continue
+        logger.info(f"    Found {len(pmcids)} PMC articles")
+        for i in range(0, min(len(pmcids), 500), batch_size):
+            batch = pmcids[i:i + batch_size]
+            try:
+                articles = ncbi.fetch_pmc_full_text(batch)
+            except Exception as e:
+                logger.warning(f"    PMC batch {i//batch_size} failed ({e}), skipping")
+                continue
+            for a in articles:
+                text = f"Title: {a['title']}\n\n{a['body']}"
+                records.append(make_general(text, f"pmc_{topic}", adapter))
     logger.info(f"  Collected {len(records)} PMC full-text records")
     return records
 
@@ -398,11 +433,13 @@ def collect_preprints(max_per_server: int = 2000) -> List[Dict[str, Any]]:
     records = []
     servers = [
         ("biorxiv", "research", [
-            "pharmacology", "neuroscience", "immunology", "genomics"
+            "pharmacology and toxicology", "neuroscience", "immunology", "genomics",
+            "microbiology", "cell biology", "molecular biology",
         ]),
         ("medrxiv", "research", [
             "cardiovascular medicine", "oncology", "epidemiology",
-            "infectious diseases", "psychiatry and clinical psychology"
+            "infectious diseases", "psychiatry and clinical psychology",
+            "pharmacology and therapeutics", "intensive care and critical care medicine",
         ]),
     ]
     session = requests.Session()
@@ -410,30 +447,38 @@ def collect_preprints(max_per_server: int = 2000) -> List[Dict[str, Any]]:
 
     for server, adapter, subjects in servers:
         collected = 0
-        for subject in subjects:
-            if collected >= max_per_server:
-                break
+        # Paginate through the API (returns 100 per page by default)
+        cursor = 0
+        while collected < max_per_server:
             try:
-                # bioRxiv/medRxiv API: https://api.biorxiv.org/details/{server}/{from}/{to}
-                url = f"https://api.biorxiv.org/details/{server}/2023-01-01/2024-12-31/0"
-                resp = session.get(url, timeout=30)
-                if resp.status_code != 200:
-                    continue
+                url = f"https://api.biorxiv.org/details/{server}/2023-01-01/2024-12-31/{cursor}"
+                resp = _robust_get(session, url, timeout=30)
                 data = resp.json()
                 papers = data.get("collection", [])
-                for paper in papers[:200]:
-                    if subject.lower() in paper.get("category", "").lower():
+                if not papers:
+                    break
+                for paper in papers:
+                    category = paper.get("category", "").lower()
+                    if any(s.lower() in category for s in subjects):
                         title = paper.get("title", "")
                         abstract = paper.get("abstract", "")
                         if title and abstract and len(abstract) > 100:
                             text = f"Title: {title}\n\nAbstract: {abstract}"
                             records.append(make_general(text, f"{server}_preprint", adapter))
                             collected += 1
-                time.sleep(0.5)
+                            if collected >= max_per_server:
+                                break
+                cursor += len(papers)
+                # API returns at most 100 per page; stop if fewer
+                if len(papers) < 100:
+                    break
+                time.sleep(1.0)
             except Exception as e:
-                logger.warning(f"  Preprint collection error ({server}/{subject}): {e}")
-                continue
-    logger.info(f"  Collected {len(records)} preprint records")
+                logger.warning(f"  Preprint collection error ({server} cursor={cursor}): {e}")
+                break
+        logger.info(f"  {server}: {collected} preprints collected")
+
+    logger.info(f"  Collected {len(records)} total preprint records")
     return records
 
 
@@ -445,11 +490,20 @@ def collect_litcovid(ncbi: NCBIClient, max_articles: int = 10_000) -> List[Dict[
     """Collect LitCovid COVID-19 curated literature via PubMed."""
     logger.info("  Collecting LitCovid (COVID-19 curated literature)...")
     query = "COVID-19[mh] OR SARS-CoV-2[mh] AND 2020:2024[dp]"
-    pmids = ncbi.search("pubmed", query, retmax=max_articles)
+    try:
+        pmids = ncbi.search("pubmed", query, retmax=max_articles)
+    except Exception as e:
+        logger.warning(f"  LitCovid search failed: {e}")
+        return []
     records = []
-    for i in range(0, len(pmids), 200):
-        batch = pmids[i:i + 200]
-        abstracts = ncbi.fetch_pubmed_abstracts(batch)
+    batch_size = 50
+    for i in range(0, len(pmids), batch_size):
+        batch = pmids[i:i + batch_size]
+        try:
+            abstracts = ncbi.fetch_pubmed_abstracts(batch)
+        except Exception as e:
+            logger.warning(f"  LitCovid batch {i//batch_size} failed ({e}), skipping")
+            continue
         for a in abstracts:
             text = f"Title: {a['title']}\n\nAbstract: {a['abstract']}"
             records.append(make_general(text, "litcovid", "research"))
@@ -462,61 +516,30 @@ def collect_litcovid(ncbi: NCBIClient, max_articles: int = 10_000) -> List[Dict[
 # =============================================================================
 
 HF_BIOMEDICAL_DATASETS = [
+    # (local_name, hf_id, subset/config, adapter, description)
     # ── Biomedical Literature ──────────────────────────────────────────────
-    ("pubmed_200k_rct", "pubmed_200k_rct_randomized_controlled_trials", None,
-     "research", "PubMed 200k RCT abstracts with sentence role labels"),
-    ("cord19_qa", "allenai/cord19", None,
-     "research", "COVID-19 Open Research Dataset — abstracts and full text"),
+    ("cord19_abstracts", "allenai/cord19", "metadata",
+     "research", "COVID-19 Open Research Dataset — metadata with abstracts"),
 
     # ── Question Answering ─────────────────────────────────────────────────
-    ("healthsearchqa", "katielink/healthsearchqa", None,
+    ("healthsearchqa", "katielink/healthsearchqa", "all_data",
      "patient_triage", "HealthSearchQA: consumer health search Q&A (3.4K)"),
-    ("bioasq_7b", "bigbio/bioasq", "bioasq_7b_source",
-     "research", "BioASQ biomedical Q&A (factoid + list + YN + summary) 7b split"),
-    ("bioasq_8b", "bigbio/bioasq", "bioasq_8b_source",
-     "research", "BioASQ biomedical Q&A 8b split"),
-    ("liveqa_medical", "bigbio/liveqa_medical", "liveqa_medical_bigbio_qa",
-     "patient_triage", "LiveQA Medical Track 2017 — consumer health questions"),
-    ("mednli", "bigbio/mednli", "mednli_bigbio_te",
-     "clinical_decision", "MedNLI — clinical NLI from MIMIC-III discharge notes"),
     ("biomrc", "bigbio/biomrc", "biomrc_large_A_bigbio_qa",
      "research", "BioMRC — biomedical machine reading comprehension"),
-    ("blurb_bioasq", "bigbio/bioasq", "bioasq_5b_source",
-     "research", "BLURB BioASQ 5b — biomedical QA benchmark"),
-    ("mash_qa", "bigbio/mash_qa", "mash_qa_bigbio_qa",
-     "patient_triage", "MASH-QA — consumer health multi-answer QA"),
 
     # ── Named Entity Recognition / Clinical NLP ────────────────────────────
     ("medmentions", "bigbio/medmentions", "medmentions_full_bigbio_kb",
      "research", "MedMentions: 4.4K PubMed abstracts with UMLS entity mentions"),
-    ("ncbi_disease_ner", "bigbio/ncbi_disease", "ncbi_disease_bigbio_ner",
-     "clinical_decision", "NCBI Disease Corpus — disease NER (793 abstracts)"),
-    ("bc5cdr_chem", "bigbio/bc5cdr", "bc5cdr_bigbio_kb",
-     "clinical_pharmacist", "BC5CDR — chemical/disease NER from PubMed"),
-    ("jnlpba", "bigbio/jnlpba", "jnlpba_bigbio_ner",
+    ("jnlpba", "bigbio/jnlpba", "jnlpba_bigbio_kb",
      "research", "JNLPBA: biomedical entity NER (DNA, RNA, cell, protein)"),
-    ("chemdner", "bigbio/chemdner", "chemdner_bigbio_ner",
-     "clinical_pharmacist", "CHEMDNER: chemical NER from PubMed abstracts"),
-    ("ddi_corpus_ner", "bigbio/ddi_corpus", "ddi_corpus_bigbio_re",
-     "clinical_pharmacist", "DDI Corpus — drug-drug interaction relation extraction"),
 
     # ── Relation Extraction ────────────────────────────────────────────────
     ("chemprot", "bigbio/chemprot", "chemprot_bigbio_kb",
      "research", "ChemProt — chemical-protein interaction relations"),
     ("drugprot", "bigbio/drugprot", "drugprot_bigbio_kb",
      "clinical_pharmacist", "DrugProt — drug-gene/protein interaction corpus"),
-
-    # ── Summarization / Dialogue ───────────────────────────────────────────
-    ("mediqa_sum", "bigbio/mediqa_sum", "mediqa_sum_bigbio_t2t",
-     "clinical_decision", "MEDIQA-Sum: clinical dialogue summarization"),
-    ("medical_dialog_zh_en", "medical_dialog", "en",
-     "patient_triage", "MedDialog: 300K+ Chinese and English medical consultations"),
-
-    # ── Genomics / Precision Medicine ─────────────────────────────────────
-    ("clinvar_qa", "bigbio/clinvar", None,
-     "research", "ClinVar variant-disease associations for genomic reasoning"),
-    ("pharmacogenomics_kg", "pruas/BENCH-PharmaCoKG-DrugGene", None,
-     "clinical_pharmacist", "Pharmacogenomics drug-gene KG (9K pairs)"),
+    ("ddi_corpus", "bigbio/ddi_corpus", "ddi_corpus_bigbio_kb",
+     "clinical_pharmacist", "DDI Corpus — drug-drug interaction extraction"),
 ]
 
 
@@ -541,7 +564,6 @@ def collect_hf_biomedical() -> List[Dict[str, Any]]:
                     ds = load_dataset(hf_id, split="train", trust_remote_code=True)
                 except Exception:
                     ds = load_dataset(hf_id, trust_remote_code=True)
-                    # Take the first split available
                     split_name = list(ds.keys())[0]
                     ds = ds[split_name]
 
@@ -561,23 +583,49 @@ def collect_hf_biomedical() -> List[Dict[str, Any]]:
 
 def _hf_row_to_record(row: dict, source: str, adapter: str) -> Optional[Dict[str, Any]]:
     """Convert a HuggingFace row to IMI format using flexible field detection."""
-    row = {k: (v if isinstance(v, str) else str(v) if v is not None else "") for k, v in row.items()}
 
     # Instruction format: prefer question/answer pairs
     for q_field in ("question", "input", "query", "prompt", "instruction"):
         for a_field in ("answer", "output", "response", "long_answer", "ideal_answer"):
-            if q_field in row and a_field in row and row[q_field] and row[a_field]:
-                return make_instruction(row[q_field], row[a_field], source, adapter)
+            q_val = row.get(q_field)
+            a_val = row.get(a_field)
+            if q_val and a_val:
+                q_str = q_val if isinstance(q_val, str) else str(q_val)
+                a_str = a_val if isinstance(a_val, str) else str(a_val)
+                if q_str.strip() and a_str.strip():
+                    return make_instruction(q_str, a_str, source, adapter)
 
     # General knowledge format: prefer text / abstract / passage
     for t_field in ("text", "abstract", "passage", "document", "body"):
-        if t_field in row and row[t_field] and len(row[t_field]) > 50:
-            return make_general(row[t_field], source, adapter)
+        val = row.get(t_field)
+        if val:
+            t_str = val if isinstance(val, str) else str(val)
+            if len(t_str) > 50:
+                return make_general(t_str, source, adapter)
 
     # Combine title + abstract if available
-    if "title" in row and "abstract" in row and row["title"] and row["abstract"]:
-        text = f"{row['title']}\n\n{row['abstract']}"
-        return make_general(text, source, adapter)
+    title = row.get("title")
+    abstract = row.get("abstract")
+    if title and abstract:
+        t_str = title if isinstance(title, str) else str(title)
+        a_str = abstract if isinstance(abstract, str) else str(abstract)
+        if t_str.strip() and a_str.strip():
+            return make_general(f"{t_str}\n\n{a_str}", source, adapter)
+
+    # BigBio KB schema: passages contain text spans
+    passages = row.get("passages")
+    if passages and isinstance(passages, list):
+        texts = []
+        for p in passages:
+            if isinstance(p, dict):
+                ptexts = p.get("text", [])
+                if isinstance(ptexts, list):
+                    texts.extend(t for t in ptexts if isinstance(t, str) and t.strip())
+                elif isinstance(ptexts, str) and ptexts.strip():
+                    texts.append(ptexts)
+        combined = " ".join(texts)
+        if len(combined) > 50:
+            return make_general(combined, source, adapter)
 
     return None
 
@@ -615,11 +663,7 @@ def collect_clinical_trials(max_trials: int = 5000) -> List[Dict[str, Any]]:
                 "pageSize": min(per_condition, 1000),
                 "format": "json",
             }
-            resp = session.get(base_url, params=params, timeout=30)
-            if resp.status_code != 200:
-                logger.warning(f"  ClinicalTrials API error {resp.status_code} for {condition}")
-                continue
-
+            resp = _robust_get(session, base_url, params=params, timeout=30)
             data = resp.json()
             studies = data.get("studies", [])
 
@@ -675,7 +719,6 @@ def collect_sider(max_records: int = 10000) -> List[Dict[str, Any]]:
     """
     SIDER: Side Effect Resource — drug-side effect associations.
     http://sideeffects.embl.de/ — STITCH compound IDs mapped to MedDRA terms.
-    Downloads the SIDER 4.1 flat files (publicly available, no auth needed).
     """
     logger.info("  Collecting SIDER drug-side effect data...")
     records = []
@@ -714,10 +757,11 @@ def collect_sider(max_records: int = 10000) -> List[Dict[str, Any]]:
         if count >= max_records:
             break
         if len(effects) >= 3:
+            unique_effects = list(dict.fromkeys(effects))  # deduplicate preserving order
             instruction = f"What are the common side effects of {drug}?"
             output = (
                 f"According to the SIDER database, {drug} is associated with the following "
-                f"side effects: {', '.join(effects[:15])}.\n\n"
+                f"side effects: {', '.join(unique_effects[:15])}.\n\n"
                 f"This information is based on post-marketing reports and clinical trial data. "
                 f"Not all patients experience these effects. Consult the prescribing information "
                 f"and a healthcare professional for complete safety information."
@@ -738,44 +782,77 @@ def collect_dailymed(ncbi: NCBIClient, max_drugs: int = 2000) -> List[Dict[str, 
     records = []
     base = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
     session = requests.Session()
+    session.headers["User-Agent"] = "IMI-Medical-LLM/1.0"
 
-    try:
-        # Get list of drug labels
-        resp = session.get(f"{base}/spls.json", params={"pagesize": 100, "page": 1}, timeout=30)
-        data = resp.json()
-        spls = data.get("data", [])
+    sections_of_interest = [
+        ("indications_and_usage", "What are the indications for {}?"),
+        ("dosage_and_administration", "What is the dosage for {}?"),
+        ("warnings_and_cautions", "What are the warnings for {}?"),
+        ("drug_interactions", "What are the drug interactions for {}?"),
+    ]
 
-        for spl in spls[:max_drugs]:
-            set_id = spl.get("setid", "")
-            if not set_id:
-                continue
-            try:
-                detail = session.get(f"{base}/spls/{set_id}.json", timeout=15).json()
-                label = detail.get("data", {})
-                drug_name = label.get("title", "")
+    collected = 0
+    page = 1
+    while collected < max_drugs:
+        try:
+            resp = _robust_get(session, f"{base}/spls.json",
+                               params={"pagesize": 100, "page": page}, timeout=30)
+            data = resp.json()
+            spls = data.get("data", [])
+            if not spls:
+                break
+
+            for spl in spls:
+                if collected >= max_drugs:
+                    break
+                set_id = spl.get("setid", "")
+                title = spl.get("title", "")
+                if not set_id:
+                    continue
+
+                # Extract drug name from title (e.g. "ASPIRIN- aspirin tablet" → "aspirin")
+                drug_name = title.split("-")[0].strip() if title else ""
+                if not drug_name:
+                    drug_name = spl.get("generic_name", spl.get("brand_name", ""))
                 if not drug_name:
                     continue
 
-                # Build instruction pairs from label sections
-                sections_of_interest = [
-                    ("indications_and_usage", "What are the indications for {}?"),
-                    ("dosage_and_administration", "What is the dosage for {}?"),
-                    ("warnings_and_cautions", "What are the warnings for {}?"),
-                    ("drug_interactions", "What are the drug interactions for {}?"),
-                ]
-                for section_key, q_template in sections_of_interest:
-                    section_text = label.get(section_key, "")
-                    if section_text and len(section_text) > 50:
-                        records.append(make_instruction(
-                            q_template.format(drug_name),
-                            section_text[:2000],
-                            "dailymed", "clinical_pharmacist",
-                        ))
-                time.sleep(0.2)
-            except Exception:
-                continue
-    except Exception as e:
-        logger.warning(f"  DailyMed error: {e}")
+                try:
+                    detail_resp = _robust_get(session, f"{base}/spls/{set_id}.json", timeout=15)
+                    detail = detail_resp.json()
+
+                    # DailyMed v2 returns sections as a nested list
+                    label_data = detail.get("data", {})
+                    sections = {}
+
+                    # Try to extract from structured sections
+                    if isinstance(label_data, dict):
+                        for key in label_data:
+                            if isinstance(label_data[key], str) and len(label_data[key]) > 50:
+                                sections[key.lower()] = label_data[key]
+
+                    # Build instruction pairs from available sections
+                    for section_key, q_template in sections_of_interest:
+                        section_text = sections.get(section_key, "")
+                        if section_text and len(section_text) > 50:
+                            # Clean HTML tags if present
+                            clean_text = re.sub(r'<[^>]+>', '', section_text)[:2000]
+                            records.append(make_instruction(
+                                q_template.format(drug_name),
+                                clean_text,
+                                "dailymed", "clinical_pharmacist",
+                            ))
+                            collected += 1
+
+                    time.sleep(0.2)
+                except Exception:
+                    continue
+
+            page += 1
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"  DailyMed error on page {page}: {e}")
+            break
 
     logger.info(f"  Collected {len(records)} DailyMed records")
     return records
@@ -844,39 +921,52 @@ def collect_hpo() -> List[Dict[str, Any]]:
 def collect_mesh_terms(ncbi: NCBIClient, max_terms: int = 5000) -> List[Dict[str, Any]]:
     """
     Collect MeSH (Medical Subject Headings) definitions via NCBI E-utilities.
-    Used for medical terminology grounding.
+    Uses the PubMed database to find articles, then extracts MeSH terms.
     """
     logger.info("  Collecting MeSH terms via NCBI E-utilities...")
     records = []
-    # Sample major MeSH disease categories
-    mesh_queries = [
-        "Cardiovascular Diseases[mh]", "Neoplasms[mh]", "Mental Disorders[mh]",
-        "Respiratory Tract Diseases[mh]", "Endocrine System Diseases[mh]",
-        "Nervous System Diseases[mh]", "Infectious Disease Medicine[mh]",
-    ]
-    per_query = max_terms // len(mesh_queries)
 
-    for mesh_q in mesh_queries:
+    # Search PubMed for broad disease categories and collect unique MeSH terms
+    mesh_categories = [
+        "cardiovascular diseases", "neoplasms", "mental disorders",
+        "respiratory tract diseases", "endocrine system diseases",
+        "nervous system diseases", "communicable diseases",
+        "musculoskeletal diseases", "digestive system diseases",
+        "skin diseases",
+    ]
+
+    seen_terms = set()
+    for category in mesh_categories:
+        if len(records) >= max_terms:
+            break
         try:
-            ids = ncbi.search("mesh", mesh_q, retmax=per_query)
+            # Search the mesh database directly with plain text queries
+            ids = ncbi.search("mesh", category, retmax=200)
             if not ids:
+                logger.info(f"    No MeSH IDs for '{category}'")
                 continue
+            # Fetch MeSH records as XML
             xml_text = ncbi._get_xml("efetch.fcgi", {
                 "db": "mesh", "id": ",".join(ids[:100]),
                 "rettype": "full", "retmode": "xml",
             })
-            root = ET.fromstring(xml_text)
-            for term in root.findall(".//DescriptorRecord"):
-                name_el = term.find(".//DescriptorName/String")
-                scope_el = term.find(".//ScopeNote")
+            try:
+                root = ET.fromstring(xml_text)
+            except ET.ParseError:
+                logger.warning(f"    MeSH XML parse error for {category}")
+                continue
+            for record in root.findall(".//DescriptorRecord"):
+                name_el = record.find(".//DescriptorName/String")
+                scope_el = record.find(".//ScopeNote")
                 if name_el is not None and scope_el is not None:
-                    name = name_el.text or ""
-                    scope = scope_el.text or ""
-                    if name and scope and len(scope) > 30:
+                    name = (name_el.text or "").strip()
+                    scope = (scope_el.text or "").strip()
+                    if name and scope and len(scope) > 30 and name not in seen_terms:
+                        seen_terms.add(name)
                         instruction = f"Define the medical term '{name}' as used in clinical and research contexts."
                         records.append(make_instruction(instruction, scope, "mesh", "education"))
         except Exception as e:
-            logger.warning(f"  MeSH error for {mesh_q}: {e}")
+            logger.warning(f"  MeSH error for {category}: {e}")
 
     logger.info(f"  Collected {len(records)} MeSH term records")
     return records
@@ -894,7 +984,7 @@ def collect_s2orc_sample(max_papers: int = 5000) -> List[Dict[str, Any]]:
     logger.info("  Collecting Semantic Scholar biomedical papers...")
     records = []
     session = requests.Session()
-    headers = {}
+    headers = {"User-Agent": "IMI-Medical-LLM/1.0"}
     if SEMANTIC_SCHOLAR_KEY:
         headers["x-api-key"] = SEMANTIC_SCHOLAR_KEY
     session.headers.update(headers)
@@ -910,9 +1000,19 @@ def collect_s2orc_sample(max_papers: int = 5000) -> List[Dict[str, Any]]:
         "mental health depression treatment",
     ]
 
+    rate_limited_until = 0
     for query in biomedical_queries:
         if len(records) >= max_papers:
             break
+        # Skip if we are still rate-limited
+        now = time.time()
+        if now < rate_limited_until:
+            wait = rate_limited_until - now
+            if wait > 120:
+                logger.warning(f"  S2 rate limit too long ({wait:.0f}s), skipping remaining queries")
+                break
+            logger.info(f"  S2 rate limit — waiting {wait:.0f}s")
+            time.sleep(wait)
         try:
             resp = session.get(
                 "https://api.semanticscholar.org/graph/v1/paper/search",
@@ -921,10 +1021,13 @@ def collect_s2orc_sample(max_papers: int = 5000) -> List[Dict[str, Any]]:
                 timeout=30,
             )
             if resp.status_code == 429:
-                logger.warning("  S2 rate limit — sleeping 60s")
-                time.sleep(60)
+                # Use Retry-After header if available, else 30s
+                retry_after = int(resp.headers.get("Retry-After", 30))
+                rate_limited_until = time.time() + retry_after
+                logger.warning(f"  S2 rate limit — will retry after {retry_after}s")
                 continue
             if resp.status_code != 200:
+                logger.warning(f"  S2 returned {resp.status_code} for '{query}'")
                 continue
             data = resp.json()
             for paper in data.get("data", []):
