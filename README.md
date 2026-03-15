@@ -75,9 +75,9 @@ Step 1 — Data Collection
   python scripts/data_collection/synthetic_generator.py    # synthetic cases (unlimited)
 
 Step 2 — Foundation Training  (full fine-tuning, all 7B params)
-  python scripts/training/train_foundation.py
-  # Hardware: 1× A100 80GB + DeepSpeed CPU offload  OR  4× A100 for speed
-  # Cost: ~$3–15 depending on dataset size
+  torchrun --nproc_per_node=8 scripts/training/train_foundation.py --deepspeed configs/deepspeed_zero3.json
+  # Hardware: 8× A100 80GB, ZeRO-3  (~30 GB/GPU, 50 GB headroom)
+  # Cost: ~$1 (500K examples)  /  ~$30 (full 5M corpus)  /  ~3 hrs at most
 
 Step 3 — ORPO Safety Alignment  (replaces DPO — no reference model needed)
   python scripts/training/train_dpo.py train --foundation-path models/foundation
@@ -107,15 +107,16 @@ Step 6 — Checkpoint Averaging (optional, improves stability)
 | Synthetic generator | unlimited | template-based |
 | **Clean usable (deduplicated)** | **~4–5M** | **~2B tokens** |
 
-## Training Cost (Mistral 7B on your 8× A100 80GB)
+## Training Cost (Mistral 7B — 8× A100 80GB foundation)
 
 | Phase | Hardware | Time | Cost |
 |-------|----------|------|------|
-| Foundation (500K examples, 3 epochs) | 1× A100 80GB | ~2 hrs | ~$4 |
-| Foundation (4M examples, 3 epochs) | 8× A100 80GB | ~1.5 hrs | ~$24 |
+| Foundation (500K examples, 3 epochs) | 8× A100 80GB | ~20 min | ~$1 |
+| Foundation (4M examples, 3 epochs) | 8× A100 80GB | ~2.5 hrs | ~$24 |
+| Foundation (full ~5M corpus, 3 epochs) | 8× A100 80GB | ~3 hrs | ~$30 |
 | ORPO safety alignment | 1× A100 40GB | ~30 min | ~$1 |
 | 6 LoRA adapters (QLoRA) | 1× A100 40GB each | ~2 hrs total | ~$4 |
-| **Full MVP pipeline** | | | **~$30–50** |
+| **Full pipeline (5M corpus)** | | | **~$35** |
 
 ## Quick Start
 

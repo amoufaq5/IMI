@@ -58,7 +58,7 @@
                                                |
                                                v
    =================================================================
-   PHASE 3: FOUNDATION TRAINING (Full Fine-Tuning — 1× A100 80GB)
+   PHASE 3: FOUNDATION TRAINING (Full Fine-Tuning — 8× A100 80GB)
    =================================================================
 
    +---------------------------------------------------------------+
@@ -67,34 +67,45 @@
    |   (7B parameters — ALL trainable, no LoRA)                   |
    |                                                               |
    |   +-------------------+    +-----------------------------+    |
-   |   | Model Loading     |    | A100/H100 Optimizations     |    |
+   |   | Model Loading     |    | Multi-GPU Optimizations     |    |
    |   |                   |    |                             |    |
    |   | - BFloat16        |    | - Flash Attention 2         |    |
    |   | - No quantization |    | - TF32 matmul enabled       |    |
    |   | - Full parameters |    | - Gradient checkpointing    |    |
-   |   | - device_map=auto |    | - Sequence packing          |    |
-   |   +-------------------+    | - Pin memory + 4 workers    |    |
-   |                            | - DeepSpeed CPU offload     |    |
+   |   | - DeepSpeed FSDP  |    | - Sequence packing          |    |
+   |   +-------------------+    | - Pin memory + 8 workers    |    |
+   |                            | - DeepSpeed ZeRO-3          |    |
    |                            +-----------------------------+    |
    |                                                               |
-   |   Training Config (single A100 80GB):                        |
+   |   Training Config (8× A100 80GB — PRIMARY):                  |
    |   +-------------------------------------------------------+  |
-   |   | Epochs:           3                                    |  |
-   |   | Per-device batch: 4                                    |  |
-   |   | Grad accumulation: 4  (effective batch = 16)           |  |
-   |   | Learning rate:    2e-5 (cosine schedule)               |  |
-   |   | Warmup:           3%                                   |  |
-   |   | Max seq length:   2048                                 |  |
-   |   | Precision:        BFloat16                             |  |
-   |   | Optimizer:        AdamW (CPU offloaded via ZeRO-3)     |  |
-   |   | GPU memory:       ~38 GB  (42 GB headroom on 80GB)     |  |
+   |   | Epochs:            3                                   |  |
+   |   | Per-device batch:  8                                   |  |
+   |   | Grad accumulation: 2  (effective batch = 128)          |  |
+   |   | Learning rate:     2e-5 (cosine schedule)              |  |
+   |   | Warmup:            3%                                  |  |
+   |   | Max seq length:    4096                                |  |
+   |   | Precision:         BFloat16                            |  |
+   |   | Strategy:          DeepSpeed ZeRO-3                    |  |
+   |   | Per GPU memory:    ~30 GB  (50 GB headroom on 80GB)    |  |
+   |   | Launch:            torchrun --nproc_per_node=8         |  |
    |   +-------------------------------------------------------+  |
    |                                                               |
-   |   Optional multi-GPU (faster):                               |
+   |   ZeRO-3 memory breakdown (per GPU, 7B model):               |
    |   +-------------------------------------------------------+  |
-   |   | torchrun --nproc_per_node=4 train_foundation.py        |  |
-   |   | + configs/deepspeed_zero3.json                         |  |
-   |   | 4× A100 80GB: ~2× faster, each GPU uses ~20 GB        |  |
+   |   | Model shard (BF16):   7B × 2B / 8 GPUs  ≈  1.75 GB  |  |
+   |   | Gradient shard:                          ≈  1.75 GB  |  |
+   |   | Optimizer shard (Adam 32-bit / 8):       ≈  7.00 GB  |  |
+   |   | Activations (batch=8, seq=4096, gc):     ≈ 18–22 GB  |  |
+   |   | NCCL buffers:                            ≈  1 GB     |  |
+   |   | Total per GPU:                           ≈ 30–33 GB  ✓ |  |
+   |   +-------------------------------------------------------+  |
+   |                                                               |
+   |   Speed estimates (8× A100 80GB):                            |
+   |   +-------------------------------------------------------+  |
+   |   | 500K examples, 3 epochs:  ~20 min,  cost ~$1          |  |
+   |   | 4M  examples, 3 epochs:  ~2.5 hrs,  cost ~$24         |  |
+   |   | Full ~5M corpus, 3 epochs: ~3 hrs,   cost ~$30        |  |
    |   +-------------------------------------------------------+  |
    |                                                               |
    +---------------------------------------------------------------+
@@ -190,28 +201,33 @@
 
    +---------------------------------------------------------------+
    |                                                               |
-   |  MINIMUM: 1× A100 40GB (QLoRA adapter training)               |
-   |  RECOMMENDED: 1× A100 80GB (foundation + adapters)            |
+   |  FOUNDATION:  8× A100 80GB  (primary — your setup)            |
+   |  ORPO/ADAPTERS: 1× A100 40GB or 80GB (any single GPU)         |
    |                                                               |
-   |  Single A100 80GB (foundation training):                      |
-   |  - Full 7B parameter training with DeepSpeed CPU offload      |
-   |  - ~38 GB GPU VRAM, ~56 GB CPU RAM for optimizer              |
-   |  - Estimated: 2 hrs (500K examples) / 8 hrs (4M examples)     |
+   |  8× A100 80GB — Foundation full fine-tuning:                  |
+   |  - DeepSpeed ZeRO-3, no CPU offload needed                    |
+   |  - Per GPU: ~30–33 GB VRAM (50 GB headroom)                   |
+   |  - Launch: torchrun --nproc_per_node=8 train_foundation.py    |
+   |  - 500K examples, 3 epochs:  ~20 min,  cost ~$1              |
+   |  - 4M  examples, 3 epochs:  ~2.5 hrs,  cost ~$24             |
+   |  - Full ~5M corpus, 3 epochs: ~3 hrs,   cost ~$30            |
    |                                                               |
-   |  Single A100 40GB (adapter QLoRA):                            |
+   |  1× A100 40GB — ORPO safety alignment:                        |
+   |  - Full 7B param training (BF16, no quantization)             |
+   |  - ~38 GB VRAM (optimizer sharded via ZeRO-2)                 |
+   |  - 30 pairs → ~500+ pairs: ~30 min, cost ~$1                 |
+   |                                                               |
+   |  1× A100 40GB — QLoRA domain adapters (6 adapters):           |
    |  - Mistral 7B in 4-bit NF4 ≈ 6 GB base                       |
    |  - batch=4, seq=2048: ~28 GB total VRAM                       |
-   |  - Estimated: 1–3 hrs per adapter                             |
-   |                                                               |
-   |  8× A100 80GB (your setup — fast foundation):                 |
-   |  - ZeRO-3: each GPU holds 7B/8 = ~1.75 GB model shard        |
-   |  - Foundation 4M examples: ~1.5 hrs, cost ~$24               |
+   |  - All 6 adapters: ~2 hrs total, cost ~$4                    |
    |                                                               |
    |  Key GPU Features Utilized:                                   |
-   |  - BFloat16 native (no quantization needed for FT)            |
-   |  - TF32 matmul (1.5x speedup over FP32 on A100/H100)         |
-   |  - Flash Attention 2 (memory-efficient attention)             |
-   |  - DeepSpeed ZeRO-3 + CPU optimizer offload                   |
+   |  - BFloat16 native (no quantization needed for full FT)       |
+   |  - TF32 matmul (1.5× speedup over FP32 on A100)              |
+   |  - Flash Attention 2 (memory-efficient, long sequences)       |
+   |  - DeepSpeed ZeRO-3 (foundation) / ZeRO-2 (ORPO/adapters)    |
+   |  - NVLink / NVSwitch for fast inter-GPU AllReduce             |
    |                                                               |
    +---------------------------------------------------------------+
 
@@ -229,7 +245,7 @@
    data/final/ (clean training data)
           |
           v
-   Foundation Training (full FT, A100 80GB, BF16, all 7B params)
+   Foundation Training (full FT, 8× A100 80GB, ZeRO-3, all 7B params)
           |
           v
    ORPO Safety Alignment (full FT, A100 40GB, safety pairs)
@@ -246,12 +262,13 @@
 | Aspect | QLoRA Only (Path A) | Full FT + ORPO + QLoRA (Path B) |
 |--------|---------------------|----------------------------------|
 | Parameters trained | ~0.5% (LoRA adapters) | 100% (all 7B) foundation + adapters |
-| Foundation GPU | None needed | 1× A100 80GB + CPU offload |
-| Adapter GPU | 1× A100 40GB | 1× A100 40GB |
+| Foundation hardware | None needed | **8× A100 80GB** (your setup), ZeRO-3 |
+| Adapter hardware | 1× A100 40GB | 1× A100 40GB |
 | Precision | 4-bit NF4 | BFloat16 (foundation), 4-bit (adapters) |
-| Foundation cost | $0 | ~$4–24 |
+| Foundation time | — | ~20 min (500K) / ~3 hrs (5M examples) |
+| Foundation cost | $0 | ~$1–30 depending on dataset size |
 | Adapter cost | ~$4 total | ~$4 total |
-| Quality ceiling | Good for MVP | Higher — full medical domain shift |
-| Safety alignment | ORPO (A100 40GB) | ORPO (A100 40GB) |
+| Quality ceiling | Good for POC | Higher — full medical domain shift |
+| Safety alignment | ORPO (1× A100 40GB) | ORPO (1× A100 40GB) |
 | Deployment | 6 adapters hot-swap | 6 adapters hot-swap |
-| Recommended for | POC, fast iteration | Production, clinical grade |
+| Recommended for | Fast iteration | **Production** (your path) |

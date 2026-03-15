@@ -1,6 +1,6 @@
 # IMI Training Guide
 
-Complete guide for training the IMI Medical LLM on Mistral 7B (MVP/POC).
+Complete guide for training the IMI Medical LLM on Mistral 7B.
 
 ---
 
@@ -10,8 +10,8 @@ Two training paths depending on your goal:
 
 | Path | When to use | GPU | Cost estimate |
 |------|-------------|-----|---------------|
-| **Adapter only** (QLoRA) | MVP, proof of concept, fast iteration | 1× A100 40GB | ~$4–8 |
-| **Foundation → Adapter** | Production quality, deep domain shift | 1× A100 80GB + 1× A100 40GB | ~$30–50 |
+| **Adapter only** (QLoRA) | Fast iteration, proof of concept | 1× A100 40GB | ~$4–8 |
+| **Foundation → Adapter** | Production quality (your path) | **8× A100 80GB** (foundation) + 1× A100 40GB (adapters) | ~$30–50 |
 
 Both paths use the same data collection and preparation steps.
 
@@ -39,12 +39,12 @@ Both paths use the same data collection and preparation steps.
              │                       │
              ▼                       ▼
 ┌────────────────────┐   ┌────────────────────────────────┐
-│  PATH A            │   │  PATH B (production)           │
+│  PATH A            │   │  PATH B (production — your path)│
 │  ADAPTER ONLY      │   │                                │
 │                    │   │  3. FOUNDATION TRAINING        │
 │  finetune_         │   │     train_foundation.py        │
-│  mixtral.py        │   │     1× A100 80GB               │
-│  1× A100 40GB      │   │     + DeepSpeed CPU offload    │
+│  mixtral.py        │   │     8× A100 80GB               │
+│  1× A100 40GB      │   │     ZeRO-3, torchrun           │
 │                    │   │            │                   │
 │                    │   │            ▼                   │
 │                    │   │  4. ADAPTER TRAINING           │
@@ -213,30 +213,32 @@ Output saved to `models/mistral-medical-qlora/`.
 
 ---
 
-## Step 4B: Foundation Training (Path B — 1× A100 80GB)
+## Step 4B: Foundation Training (Path B — 8× A100 80GB)
 
-This trains all **7B parameters** — no LoRA, no quantization.
-Uses DeepSpeed ZeRO-3 with CPU optimizer offload so a single A100 80GB is sufficient.
+This trains all **7B parameters** — no LoRA, no quantization — using your 8-GPU cluster.
 
-### Memory layout (1× A100 80GB + CPU offload)
+### Memory layout per GPU (ZeRO-3 across 8× A100 80GB)
 
 ```
-GPU budget (80 GB):
-  Model weights (BF16):     7B × 2 bytes           ≈ 14 GB
-  Gradients (BF16):                                 ≈ 14 GB
-  Optimizer (CPU offloaded via DeepSpeed):          ≈  0 GB GPU
-  Activations (batch=4, seq=2048, grad_ckpt):      ≈ 10 GB
-  Total GPU:                                        ≈ 38 GB  ✓ (42 GB headroom)
+Per GPU (80 GB budget):
+  Model shard  (BF16):  7B × 2B / 8 GPUs   ≈  1.75 GB
+  Gradient shard:                            ≈  1.75 GB
+  Optimizer shard (Adam 32-bit, ZeRO-3):    ≈  7.00 GB
+  Activations (batch=8, seq=4096, gc):       ≈ 18–22 GB
+  NCCL buffers:                              ≈  1 GB
+  Total per GPU:                             ≈ 30–33 GB  ✓ (47–50 GB headroom)
 
-CPU RAM needed for optimizer offload:
-  AdamW 32-bit (2 states × 7B params × 4B):        ≈ 56 GB RAM
-  → Recommend 64 GB+ system RAM on your pod
+Training speed:
+  500K examples, 3 epochs:  ~20 min,  cost ~$1
+  4M  examples, 3 epochs:  ~2.5 hrs,  cost ~$24
+  Full ~5M corpus, 3 epochs: ~3 hrs,   cost ~$30
 ```
 
-### Run foundation training (single GPU)
+### Run foundation training (8× A100 80GB)
 
 ```bash
-python scripts/training/train_foundation.py \
+torchrun --nproc_per_node=8 \
+    scripts/training/train_foundation.py \
     --deepspeed configs/deepspeed_zero3.json
 ```
 

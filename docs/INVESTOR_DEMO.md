@@ -133,20 +133,20 @@ Query → [Layer 0: Memory] → [Layer 1: Knowledge Graph] → [Layer 2: Rule En
 | Training Data | 100+ open medical datasets, ~4–5M clean examples (~2B tokens) |
 | Safety | ORPO alignment + regex guardrails + rule engine + verifier |
 | Inference | vLLM with LoRA hot-swap, <200ms p95 latency |
-| Training hardware | 1× A100 80GB (foundation), 1× A100 40GB (adapters) |
+| Training hardware | **8× A100 80GB** (foundation, ZeRO-3) + 1× A100 40GB (ORPO + adapters) |
 | Inference hardware | 1× A100 40GB (full model fits, no quantization needed for inference) |
 | Compliance | HIPAA-ready, AES-256-GCM encryption, full audit logging |
 
-## Budget Summary (MVP — Mistral 7B)
+## Budget Summary (Mistral 7B — 8× A100 80GB foundation)
 
 | Phase | Cost | Duration |
 |-------|------|----------|
 | Data collection & processing | $0 (open datasets) | Day 1 |
-| Foundation training (Mistral 7B, 500K examples) | ~$4 | Day 1–2 |
-| Foundation training (Mistral 7B, full 4M examples) | ~$24 | Day 2–3 |
-| ORPO safety alignment | ~$1 | Day 3 |
-| Adapter training (6 adapters, QLoRA) | ~$4 | Day 3–4 |
-| Evaluation & iteration | ~$5 | Day 4–5 |
+| Foundation training (500K examples, 3 epochs) | ~$1 | ~20 min |
+| Foundation training (full 5M corpus, 3 epochs) | ~$30 | ~3 hrs |
+| ORPO safety alignment | ~$1 | ~30 min |
+| Adapter training (6 adapters, QLoRA, A100 40GB) | ~$4 | ~2 hrs |
+| Evaluation & iteration | ~$5 | Day 2 |
 | Inference hosting (monthly) | ~$500–800/mo | Ongoing |
 | **Total MVP** | **~$35–50** | **~1 week** |
 
