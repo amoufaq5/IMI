@@ -10,27 +10,32 @@ Training pipeline:
 Key design decisions:
 - FULL fine-tuning (no LoRA/QLoRA) — all 7B parameters updated
 - BFloat16 precision — A100/H100 native
-- DeepSpeed ZeRO Stage 2/3 optional — single A100 80GB can run without ZeRO
+- DeepSpeed ZeRO Stage 3 + CPU optimizer offload — REQUIRED (model+grads+optimizer ~90 GB > 80 GB GPU)
+  configs/deepspeed_zero3.json is auto-applied when multiple GPUs are detected
 - Flash Attention 2 — with eager fallback if not installed
-- Gradient checkpointing enabled — recommended for max batch size
+- Gradient checkpointing enabled — mandatory for full FT
 - Sequence packing — maximises throughput
 
 Hardware options:
-  Single A100 80GB (no ZeRO needed):
-    python scripts/training/train_foundation.py
+  Single A100 80GB WITH ZeRO-3 CPU offload (~28 GB GPU, recommended):
+    deepspeed --num_gpus=1 scripts/training/train_foundation.py \\
+        --deepspeed configs/deepspeed_zero3.json
 
-  Multi-GPU with ZeRO Stage 3:
-    torchrun --nproc_per_node=4 scripts/training/train_foundation.py \\
+  Multi-GPU with ZeRO Stage 3 (auto-applied when --deepspeed omitted):
+    torchrun --nproc_per_node=8 scripts/training/train_foundation.py
+    # or explicitly:
+    torchrun --nproc_per_node=8 scripts/training/train_foundation.py \\
         --deepspeed configs/deepspeed_zero3.json
 
 Resume from checkpoint:
-    python scripts/training/train_foundation.py \\
+    torchrun --nproc_per_node=8 scripts/training/train_foundation.py \\
         --resume-from models/foundation/checkpoint-1000
 """
 import hashlib
 import json
 import logging
 import argparse
+import os
 import random
 from collections import defaultdict
 from pathlib import Path
@@ -333,6 +338,9 @@ def train_foundation(
     config_overrides: Optional[Dict[str, Any]] = None,
 ):
     """Run full fine-tuning on 8× A100 80GB with DeepSpeed ZeRO Stage 3."""
+    # Reduce CUDA allocator fragmentation — recommended by PyTorch for large models
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     config = dict(A100_8GPU_CONFIG)
     if config_overrides:
         config.update(config_overrides)
@@ -340,6 +348,26 @@ def train_foundation(
     base_model = base_model or config["base_model"]
     data_path = Path(data_dir) if data_dir else DATA_DIR
     output_path = output_dir or str(MODELS_DIR / "foundation")
+
+    # Auto-apply ZeRO-3 config when multiple GPUs are present and no config was given.
+    # Full FT of 7B needs ~90 GB per GPU (weights + grads + Adam states) which exceeds
+    # A100 80 GB; ZeRO-3 + CPU offload brings it down to ~28 GB per GPU.
+    if not deepspeed_config:
+        _auto_ds = PROJECT_ROOT / "configs" / "deepspeed_zero3.json"
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1 and _auto_ds.exists():
+            deepspeed_config = str(_auto_ds)
+            logger.info(
+                f"Auto-applied DeepSpeed ZeRO-3 config ({deepspeed_config}) "
+                f"— {torch.cuda.device_count()}× GPUs detected. "
+                "Pass --deepspeed '' to disable (will OOM without ZeRO on <90 GB GPU)."
+            )
+        elif not deepspeed_config:
+            logger.warning(
+                "No DeepSpeed config provided. Full FT of Mistral 7B needs ~90 GB GPU VRAM "
+                "(weights + grads + Adam states). Without ZeRO + CPU offload this will OOM on "
+                "any single A100 80 GB.\n"
+                "  Fix: --deepspeed configs/deepspeed_zero3.json"
+            )
 
     logger.info("=" * 60)
     logger.info("IMI Foundation Training — Full Fine-Tuning Mistral 7B")
@@ -354,15 +382,7 @@ def train_foundation(
     logger.info(f"Packing:            {config['packing']}")
     logger.info(f"Grad checkpointing: {config['gradient_checkpointing']}")
     logger.info(f"Optimizer:          {config['optim']}")
-    logger.info(f"DeepSpeed config:   {deepspeed_config or 'NOT SET — will OOM without ZeRO'}")
-
-    if not deepspeed_config:
-        logger.warning(
-            "No DeepSpeed config provided! Without ZeRO + CPU optimizer offload, "
-            "full fine-tuning of Mistral 7B requires ~90 GB GPU VRAM (model + grads + optimizer).\n"
-            "  Recommended: --deepspeed configs/deepspeed_zero3.json  (offloads optimizer to CPU)\n"
-            "  Single A100 80GB is fine WITH the DeepSpeed config."
-        )
+    logger.info(f"DeepSpeed config:   {deepspeed_config or 'NOT SET'}")
 
     # GPU info
     if torch.cuda.is_available():
